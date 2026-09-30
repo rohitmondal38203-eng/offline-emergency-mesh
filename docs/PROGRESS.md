@@ -13,9 +13,9 @@
 | **Documentation & System Architecture (Phase 0)** | **COMPLETED** | 100% | All 5 mandatory hackathon blueprints finalized. |
 | **Application Core & Project Setup (Phase 1)** | **COMPLETED** | 100% | React Native 0.73.6, TypeScript 5.0.4, Android project, Metro, dependencies locked. |
 | **Emergency UI & Navigation Shell (Phase 2)** | **COMPLETED** | 100% | 7 complete tactical screens, 8 reusable components, stack router, Metro bundle compiled. |
-| **Android Gradle Baseline** | **CONFIGURED** | 80% | `build.gradle`, `app/build.gradle`, permissions ready; Gradle APK build pending host JDK. |
-| **Physical Device Verification** | **PENDING** | 0% | Physical device verification pending (0 devices currently attached via ADB). |
-| **P2P Mesh Discovery (FR-1)** | **NOT STARTED** | 0% | Planned for Phase 3. Screen UI placeholder & states completed. Real radio pending. |
+| **Android Gradle Baseline** | **CONFIGURED** | 100% | `build.gradle`, `app/build.gradle`, permissions ready; Debug APK built cleanly. |
+| **Physical Device Verification** | **VERIFIED** | 100% | APK installed on physical Xiaomi device (2201116SI, Android 13) via ADB stream install. |
+| **BLE Discovery & Presence (FR-1 / Phase 3)** | **COMPLETED** | 100% | Real BLE scanning (`react-native-ble-plx`), native advertiser (`BluetoothLeAdvertiser`), stable non-PII peer identity. |
 | **Distress Beacon Generation (FR-3)** | **NOT STARTED** | 0% | Planned for Phase 4. Form UI & alert modal completed. Radio transmission pending. |
 | **Multi-Hop Relay Engine (FR-2)** | **NOT STARTED** | 0% | Planned for Phase 5. Store-and-forward architecture designed. |
 | **Offline Vector Map (FR-4)** | **NOT STARTED** | 0% | Planned for Phase 6. Tactical grid & shelter catalog UI completed. Tiles pending. |
@@ -31,15 +31,15 @@
 
 ### Functional Requirements
 
-* **[ ] FR-1: P2P Mesh Network Initialization**
-  * [x] Service abstraction placeholder created (`src/services/ble/index.ts`).
-  * [x] Nearby Devices UI Screen created (`src/screens/NearbyDevicesScreen.tsx`).
-  * [x] Empty state and mock peer visual states created (`src/components/DeviceCard.tsx`).
-  * [ ] BLE Peripheral advertisement broadcasting service UUID.
-  * [ ] BLE Central background/foreground scanning.
-  * [ ] Peer device discovery and proximity RSSI tracking.
-  * [ ] Wi-Fi Direct P2P Group Owner negotiation (high-volume data).
-  * [ ] Bidirectional socket/GATT communication channel.
+* **[x] FR-1: P2P Mesh Network Initialization (Phase 3 Completed)**
+  * [x] Service abstraction implemented (`src/services/ble/index.ts`).
+  * [x] Nearby Devices UI Screen updated with real BLE controls (`src/screens/NearbyDevicesScreen.tsx`).
+  * [x] BLE Peripheral native advertisement module (`ResqBleAdvertiserModule.kt`).
+  * [x] BLE Central foreground scanning with deduplication & RSSI (`src/services/ble/bleService.ts`).
+  * [x] Stable hardware-persisted non-PII peer identity: `RESQ-MESH:<4-HEX-DIGITS>` (`src/services/ble/peerIdentity.ts`).
+  * [x] Android 12+ & legacy runtime permission flow (`src/services/ble/blePermissions.ts`).
+  * [x] Basic peer link connection and clean disconnection (`src/services/ble/bleService.ts`).
+  * [ ] Wi-Fi Direct P2P Group Owner negotiation (high-volume data - Planned for Phase 5).
 
 * **[ ] FR-2: Multi-Hop Distress Packet Relay**
   * [x] Standard envelope interface defined (`src/models/types.ts`).

@@ -1,15 +1,31 @@
-import React, {useState} from 'react';
-import {ScrollView, StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import React, {useCallback, useEffect, useState} from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import {THEME} from '../config/theme';
 import {
   AppHeader,
   DeviceCard,
   EmergencyButton,
-  PlaceholderNotice,
   SectionHeader,
   StatusCard,
 } from '../components';
 import {NavigationProp} from '../navigation/types';
+import {
+  bleService,
+  BleAdvertiser,
+  BlePermissions,
+  BlePeer,
+  BleRadioState,
+  BlePermissionStatus,
+  PeerIdentityService,
+} from '../services/ble';
 
 interface NearbyDevicesScreenProps {
   navigation: NavigationProp;
@@ -18,152 +34,366 @@ interface NearbyDevicesScreenProps {
 export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
   navigation,
 }) => {
-  const [viewMode, setViewMode] = useState<'empty' | 'preview'>('empty');
-  const [isSimulatedScan, setIsSimulatedScan] = useState<boolean>(false);
+  const [radioState, setRadioState] = useState<BleRadioState>('UNKNOWN');
+  const [permissionStatus, setPermissionStatus] = useState<BlePermissionStatus>('CHECKING');
+  const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [isAdvertising, setIsAdvertising] = useState<boolean>(false);
+  const [advertisingSupported, setAdvertisingSupported] = useState<boolean>(true);
+  const [localPeerId, setLocalPeerId] = useState<string>('RESQ-MESH:----');
+  const [discoveredPeers, setDiscoveredPeers] = useState<BlePeer[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const toggleSimulatedScan = () => {
-    setIsSimulatedScan(!isSimulatedScan);
+  // Initialize BLE service, read identity, and check permissions
+  useEffect(() => {
+    let isMounted = true;
+
+    async function setupBle() {
+      // 1. Load stable peer identity
+      const peerId = await PeerIdentityService.getLocalPeerId();
+      if (isMounted) {
+        setLocalPeerId(peerId);
+      }
+
+      // 2. Check advertising support
+      const advSupport = await BleAdvertiser.isSupported();
+      if (isMounted) {
+        setAdvertisingSupported(advSupport);
+      }
+
+      // 3. Check initial runtime permissions
+      const permResult = await BlePermissions.checkPermissions();
+      if (isMounted) {
+        setPermissionStatus(permResult.status);
+      }
+
+      // 4. Initialize BleManager and radio listener
+      bleService.initialize((state: BleRadioState) => {
+        if (isMounted) {
+          setRadioState(state);
+          if (state === 'POWERED_OFF') {
+            setIsAdvertising(false);
+          }
+        }
+      });
+
+      // Get initial radio state
+      const initialRadio = await bleService.getRadioState();
+      if (isMounted) {
+        setRadioState(initialRadio);
+      }
+
+      // 5. Register BLE service callbacks
+      bleService.setListeners({
+        onPeersUpdated: (peers: BlePeer[]) => {
+          if (isMounted) {
+            setDiscoveredPeers(peers);
+          }
+        },
+        onScanStatusChanged: (scanning: boolean) => {
+          if (isMounted) {
+            setIsScanning(scanning);
+          }
+        },
+        onError: (err: string) => {
+          if (isMounted) {
+            setErrorMessage(err);
+          }
+        },
+      });
+    }
+
+    setupBle();
+
+    return () => {
+      isMounted = false;
+      // Step 10: Screen unmount cleanup - stop scanning to conserve radio battery
+      bleService.stopScanning();
+    };
+  }, []);
+
+  // Request permissions if not granted
+  const handleRequestPermissions = async () => {
+    setErrorMessage(null);
+    const result = await BlePermissions.requestPermissions();
+    setPermissionStatus(result.status);
+    if (!result.canScan) {
+      setErrorMessage(result.message);
+    }
   };
+
+  // Start BLE scanning
+  const handleStartScan = async () => {
+    setErrorMessage(null);
+
+    // Permission check
+    if (permissionStatus !== 'GRANTED') {
+      const result = await BlePermissions.requestPermissions();
+      setPermissionStatus(result.status);
+      if (!result.canScan) {
+        setErrorMessage(result.message);
+        return;
+      }
+    }
+
+    // Radio state check
+    const currentRadio = await bleService.getRadioState();
+    setRadioState(currentRadio);
+    if (currentRadio === 'POWERED_OFF') {
+      setErrorMessage('Bluetooth is turned OFF. Please turn on Bluetooth in device settings.');
+      return;
+    }
+    if (currentRadio === 'UNSUPPORTED') {
+      setErrorMessage('BLE is unsupported on this device hardware.');
+      return;
+    }
+
+    await bleService.startScanning();
+  };
+
+  // Stop BLE scanning
+  const handleStopScan = () => {
+    bleService.stopScanning();
+  };
+
+  // Toggle BLE peripheral advertising
+  const handleToggleAdvertising = async () => {
+    setErrorMessage(null);
+
+    if (isAdvertising) {
+      await BleAdvertiser.stopAdvertising();
+      setIsAdvertising(false);
+      return;
+    }
+
+    if (permissionStatus !== 'GRANTED') {
+      const result = await BlePermissions.requestPermissions();
+      setPermissionStatus(result.status);
+      if (!result.canAdvertise) {
+        setErrorMessage(result.message);
+        return;
+      }
+    }
+
+    try {
+      await BleAdvertiser.startAdvertising(localPeerId);
+      setIsAdvertising(true);
+    } catch (e: any) {
+      setIsAdvertising(false);
+      setErrorMessage(`Advertising error: ${e?.message || e}`);
+    }
+  };
+
+  // Connect to a peer
+  const handleConnectPeer = useCallback(async (peerId: string) => {
+    setErrorMessage(null);
+    const success = await bleService.connectToPeer(peerId);
+    if (!success) {
+      // Error message broadcasted via bleService.onError
+    }
+  }, []);
+
+  // Disconnect from a peer
+  const handleDisconnectPeer = useCallback(async (peerId: string) => {
+    await bleService.disconnectFromPeer(peerId);
+  }, []);
+
+  // Clear discovered peers
+  const handleClearPeers = () => {
+    bleService.clearDiscoveredPeers();
+  };
+
+  // Format radio status for display
+  const getRadioDisplay = () => {
+    switch (radioState) {
+      case 'POWERED_ON':
+        return {text: 'ON', color: THEME.colors.signal};
+      case 'POWERED_OFF':
+        return {text: 'OFF (DISABLED)', color: THEME.colors.emergency};
+      case 'UNAUTHORIZED':
+        return {text: 'PERMISSION DENIED', color: THEME.colors.emergency};
+      case 'UNSUPPORTED':
+        return {text: 'UNSUPPORTED', color: THEME.colors.emergency};
+      default:
+        return {text: 'INITIALIZING', color: THEME.colors.warning};
+    }
+  };
+
+  const radioBadge = getRadioDisplay();
 
   return (
     <View style={styles.container}>
       <AppHeader
         title="Nearby Devices"
-        subtitle="P2P BLE & Wi-Fi Direct Mesh"
+        subtitle="Phase 3: BLE Discovery & Presence"
         showBack
         onBack={() => navigation.goBack()}
       />
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Phase notice */}
-        <PlaceholderNotice
-          phase="Phase 3"
-          featureName="FR-1: P2P Mesh Network Initialization"
-          description="Autonomous BLE Peripheral advertising, background Central scanning, and Wi-Fi Direct Group Owner negotiation will be activated in Phase 3."
-          hardwareDependency="Bluetooth 5.0+ LE Controller & Wi-Fi Direct P2P Driver"
-        />
+        {/* Error / Warning Alert Banner */}
+        {errorMessage && (
+          <View style={styles.errorBanner}>
+            <View style={styles.errorRow}>
+              <Text style={styles.errorIcon}>⚠️</Text>
+              <Text style={styles.errorText}>{errorMessage}</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setErrorMessage(null)}
+              style={styles.errorDismiss}>
+              <Text style={styles.errorDismissText}>DISMISS</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
-        {/* Radio Telemetry Card */}
+        {/* Local Node Identity Card */}
+        <View style={styles.nodeIdentityCard}>
+          <View style={styles.nodeIdentityRow}>
+            <View>
+              <Text style={styles.nodeIdentityLabel}>THIS DEVICE IDENTITY</Text>
+              <Text style={styles.nodeIdentityVal}>{localPeerId}</Text>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={handleToggleAdvertising}
+              style={[
+                styles.advToggleBtn,
+                isAdvertising && styles.advToggleBtnActive,
+              ]}>
+              <Text style={styles.advToggleBtnText}>
+                {isAdvertising ? '■ STOP BEACON' : '▲ ADVERTISE BEACON'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.nodeIdentityHint}>
+            Non-emergency BLE presence beacon broadcasts your node ID so other phones running RESQ-MESH can discover you.
+          </Text>
+        </View>
+
+        {/* Radio & Telemetry Status Card */}
         <StatusCard
           variant="info"
           items={[
             {
-              label: 'Radio Driver',
-              value: isSimulatedScan ? 'SCANNING (SIMULATED)' : 'STANDBY (NOT ACTIVE)',
-              color: isSimulatedScan ? THEME.colors.signal : THEME.colors.warning,
+              label: 'Bluetooth',
+              value: radioBadge.text,
+              color: radioBadge.color,
             },
-            {label: 'BLE Advertising', value: 'Disabled', color: THEME.colors.textMuted},
-            {label: 'Wi-Fi Direct P2P', value: 'Uninitialized', color: THEME.colors.textMuted},
+            {
+              label: 'BLE Permission',
+              value:
+                permissionStatus === 'GRANTED'
+                  ? 'Granted'
+                  : permissionStatus === 'NEVER_ASK_AGAIN'
+                  ? 'Blocked in Settings'
+                  : 'Not Granted',
+              color:
+                permissionStatus === 'GRANTED'
+                  ? THEME.colors.signal
+                  : THEME.colors.warning,
+            },
+            {
+              label: 'Scanning',
+              value: isScanning ? 'ACTIVE (SEARCHING)' : 'IDLE',
+              color: isScanning ? THEME.colors.signal : THEME.colors.textMuted,
+            },
+            {
+              label: 'Advertising',
+              value: !advertisingSupported
+                ? 'Hardware Unsupported'
+                : isAdvertising
+                ? 'BROADCASTING'
+                : 'Disabled',
+              color: isAdvertising ? THEME.colors.success : THEME.colors.textMuted,
+            },
           ]}
         />
 
-        {/* UI State Preview Controls */}
-        <View style={styles.previewToolbar}>
-          <Text style={styles.toolbarLabel}>INSPECT UI STATES:</Text>
-          <View style={styles.toggleRow}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => setViewMode('empty')}
-              style={[
-                styles.toggleBtn,
-                viewMode === 'empty' && styles.toggleBtnActive,
-              ]}>
-              <Text
-                style={[
-                  styles.toggleBtnText,
-                  viewMode === 'empty' && styles.toggleBtnTextActive,
-                ]}>
-                Empty State
-              </Text>
-            </TouchableOpacity>
+        {/* Permission Request Prompt if not granted */}
+        {permissionStatus !== 'GRANTED' && (
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={handleRequestPermissions}
+            style={styles.permissionActionBtn}>
+            <Text style={styles.permissionActionBtnText}>
+              🔑 GRANT BLUETOOTH RUNTIME PERMISSIONS
+            </Text>
+          </TouchableOpacity>
+        )}
 
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => setViewMode('preview')}
-              style={[
-                styles.toggleBtn,
-                viewMode === 'preview' && styles.toggleBtnActive,
-              ]}>
-              <Text
-                style={[
-                  styles.toggleBtnText,
-                  viewMode === 'preview' && styles.toggleBtnTextActive,
-                ]}>
-                Preview Mock Peers
-              </Text>
-            </TouchableOpacity>
-          </View>
+        {/* Scan Action Controls */}
+        <View style={styles.scanControlsContainer}>
+          {isScanning ? (
+            <EmergencyButton
+              title="■ STOP BLE SCAN"
+              subtitle="Cease active BLE radio discovery"
+              variant="warning"
+              onPress={handleStopScan}
+            />
+          ) : (
+            <EmergencyButton
+              title="🔍 START REAL BLE SCAN"
+              subtitle="Scan for nearby RESQ-MESH nodes & BLE peripherals"
+              variant="secondary"
+              onPress={handleStartScan}
+            />
+          )}
         </View>
 
-        {/* Scan Trigger Button (UI simulation only) */}
-        <EmergencyButton
-          title={isSimulatedScan ? '■ STOP SIMULATED SCAN' : '🔍 START SIMULATED SCAN'}
-          subtitle={
-            isSimulatedScan
-              ? 'Toggling UI animation only • No hardware radio accessed'
-              : 'BLE discovery will be implemented in Phase 3'
-          }
-          variant={isSimulatedScan ? 'warning' : 'secondary'}
-          onPress={toggleSimulatedScan}
-        />
+        {/* Scanning Activity Indicator Bar */}
+        {isScanning && (
+          <View style={styles.scanningIndicatorBar}>
+            <ActivityIndicator size="small" color={THEME.colors.signal} />
+            <Text style={styles.scanningIndicatorText}>
+              Scanning 2.4 GHz BLE spectrum (20s timeout)...
+            </Text>
+          </View>
+        )}
 
-        {/* Device List or Empty State */}
-        <SectionHeader
-          title="Discovered Mesh Nodes"
-          badge={viewMode === 'preview' ? '3 SIMULATED' : '0 DETECTED'}
-        />
+        {/* Section Header with Peer Count and Clear Action */}
+        <View style={styles.sectionHeaderRow}>
+          <SectionHeader
+            title="Discovered BLE Peers"
+            badge={`${discoveredPeers.length} FOUND`}
+          />
+          {discoveredPeers.length > 0 && (
+            <TouchableOpacity onPress={handleClearPeers} style={styles.clearBtn}>
+              <Text style={styles.clearBtnText}>CLEAR</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
-        {viewMode === 'empty' ? (
-          /* Empty State */
+        {/* Discovered Peer List or Empty State */}
+        {discoveredPeers.length === 0 ? (
           <View style={styles.emptyStateCard}>
             <Text style={styles.emptyIcon}>📡</Text>
-            <Text style={styles.emptyTitle}>No Nearby Devices Found</Text>
+            <Text style={styles.emptyTitle}>No Nearby Peers Discovered</Text>
             <Text style={styles.emptySubtitle}>
-              Hardware BLE discovery and peer advertising will be activated in Phase 3.
-              Ensure nearby survivor devices have APP-08 installed and Bluetooth enabled.
+              Tap "START REAL BLE SCAN" above to scan for nearby phones running RESQ-MESH or other BLE peripherals.
+            </Text>
+            <Text style={styles.emptyAdvice}>
+              Tip: If testing with Phone B, tap "ADVERTISE BEACON" on Phone B so Phone A can discover it over Bluetooth Low Energy.
             </Text>
           </View>
         ) : (
-          /* Visual states preview */
-          <View style={styles.listContainer}>
-            <View style={styles.stateNotice}>
-              <Text style={styles.stateNoticeText}>
-                The cards below illustrate UI visual states for Discovered, Connecting, and Connected peers:
-              </Text>
-            </View>
-
-            {/* State: Connected Link */}
-            <DeviceCard
-              id="node-01"
-              name="NDRF Field Relay (Node #01)"
-              rssi={-58}
-              radioType="BLE"
-              connectionState="connected"
-              lastSeen="Active link"
-              isRelayNode={true}
-            />
-
-            {/* State: Discovered Peer */}
-            <DeviceCard
-              id="node-02"
-              name="Survivor Device (Node #44)"
-              rssi={-78}
-              radioType="BLE"
-              connectionState="discovered"
-              lastSeen="15s ago"
-              isRelayNode={true}
-            />
-
-            {/* State: Wi-Fi Direct Peer */}
-            <DeviceCard
-              id="node-03"
-              name="Medical Volunteer (Node #12)"
-              rssi={-64}
-              radioType="Wi-Fi Direct"
-              connectionState="connecting"
-              lastSeen="Just now"
-              isRelayNode={true}
-            />
+          <View style={styles.peerListContainer}>
+            {discoveredPeers.map(peer => (
+              <DeviceCard
+                key={peer.id}
+                id={peer.id}
+                name={peer.name}
+                rssi={peer.rssi !== null ? peer.rssi : -99}
+                radioType="BLE"
+                connectionState={peer.connectionState}
+                lastSeen={
+                  peer.connectionState === 'connected'
+                    ? 'Active link'
+                    : `${Math.round((Date.now() - peer.lastSeen) / 1000)}s ago`
+                }
+                isRelayNode={peer.isResqMeshPeer}
+                onConnect={() => handleConnectPeer(peer.id)}
+                onDisconnect={() => handleDisconnectPeer(peer.id)}
+              />
+            ))}
           </View>
         )}
       </ScrollView>
@@ -180,40 +410,138 @@ const styles = StyleSheet.create({
     padding: THEME.spacing.md,
     paddingBottom: THEME.spacing.xxl,
   },
-  previewToolbar: {
-    backgroundColor: THEME.colors.surface,
-    padding: THEME.spacing.sm,
-    borderRadius: THEME.borderRadius.md,
-    marginVertical: THEME.spacing.xs,
+  errorBanner: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
     borderWidth: 1,
-    borderColor: THEME.colors.surfaceBorder,
+    borderColor: THEME.colors.emergency,
+    borderRadius: THEME.borderRadius.md,
+    padding: THEME.spacing.sm,
+    marginBottom: THEME.spacing.sm,
   },
-  toolbarLabel: {
+  errorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  errorIcon: {
+    fontSize: 16,
+    marginRight: 6,
+  },
+  errorText: {
+    flex: 1,
+    ...THEME.typography.caption,
+    color: '#fca5a5',
+    fontWeight: '600',
+  },
+  errorDismiss: {
+    alignSelf: 'flex-end',
+    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  errorDismissText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: THEME.colors.emergency,
+  },
+  nodeIdentityCard: {
+    backgroundColor: THEME.colors.surface,
+    borderWidth: 1,
+    borderColor: THEME.colors.signalDark,
+    borderRadius: THEME.borderRadius.md,
+    padding: THEME.spacing.md,
+    marginBottom: THEME.spacing.sm,
+  },
+  nodeIdentityRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  nodeIdentityLabel: {
     ...THEME.typography.caption,
     color: THEME.colors.signal,
-    marginBottom: 6,
+    letterSpacing: 0.5,
   },
-  toggleRow: {
-    flexDirection: 'row',
+  nodeIdentityVal: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: THEME.colors.textPrimary,
+    letterSpacing: 1,
+    marginTop: 2,
   },
-  toggleBtn: {
-    flex: 1,
-    paddingVertical: 8,
-    alignItems: 'center',
-    borderRadius: THEME.borderRadius.sm,
+  nodeIdentityHint: {
+    ...THEME.typography.bodySmall,
+    color: THEME.colors.textMuted,
+    fontSize: 11,
+    marginTop: 6,
+    lineHeight: 15,
+  },
+  advToggleBtn: {
     backgroundColor: THEME.colors.surfaceRaised,
-    marginHorizontal: 3,
+    borderWidth: 1,
+    borderColor: THEME.colors.signal,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: THEME.borderRadius.sm,
   },
-  toggleBtnActive: {
+  advToggleBtnActive: {
     backgroundColor: THEME.colors.signalDark,
+    borderColor: THEME.colors.signal,
   },
-  toggleBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: THEME.colors.textSecondary,
-  },
-  toggleBtnTextActive: {
+  advToggleBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
     color: '#ffffff',
+    letterSpacing: 0.5,
+  },
+  permissionActionBtn: {
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+    borderWidth: 1,
+    borderColor: THEME.colors.warning,
+    borderRadius: THEME.borderRadius.md,
+    paddingVertical: 10,
+    paddingHorizontal: THEME.spacing.md,
+    alignItems: 'center',
+    marginBottom: THEME.spacing.sm,
+  },
+  permissionActionBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: THEME.colors.warning,
+    letterSpacing: 0.5,
+  },
+  scanControlsContainer: {
+    marginVertical: THEME.spacing.xs,
+  },
+  scanningIndicatorBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(56, 189, 248, 0.08)',
+    borderRadius: THEME.borderRadius.sm,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: THEME.spacing.sm,
+  },
+  scanningIndicatorText: {
+    fontSize: 12,
+    color: THEME.colors.signal,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: THEME.spacing.xs,
+  },
+  clearBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  clearBtnText: {
+    fontSize: 11,
+    color: THEME.colors.textMuted,
+    fontWeight: '700',
   },
   emptyStateCard: {
     backgroundColor: THEME.colors.surface,
@@ -238,20 +566,18 @@ const styles = StyleSheet.create({
     color: THEME.colors.textSecondary,
     textAlign: 'center',
     lineHeight: 18,
-    maxWidth: 280,
+    maxWidth: 290,
   },
-  listContainer: {
-    marginVertical: THEME.spacing.xs,
-  },
-  stateNotice: {
-    backgroundColor: 'rgba(56, 189, 248, 0.08)',
-    borderRadius: 4,
-    padding: 8,
-    marginBottom: 8,
-  },
-  stateNoticeText: {
-    fontSize: 11,
+  emptyAdvice: {
+    ...THEME.typography.bodySmall,
     color: THEME.colors.signal,
+    fontSize: 11,
+    textAlign: 'center',
     lineHeight: 16,
+    maxWidth: 290,
+    marginTop: 10,
+  },
+  peerListContainer: {
+    marginVertical: THEME.spacing.xs,
   },
 });

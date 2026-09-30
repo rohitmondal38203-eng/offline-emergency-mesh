@@ -1,8 +1,8 @@
 import React from 'react';
-import {StyleSheet, Text, View} from 'react-native';
+import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 import {THEME} from '../config/theme';
 
-export type DeviceConnectionState = 'discovered' | 'connecting' | 'connected' | 'idle';
+export type DeviceConnectionState = 'discovered' | 'connecting' | 'connected' | 'disconnected' | 'idle';
 
 export interface DeviceItemProps {
   id: string;
@@ -12,6 +12,8 @@ export interface DeviceItemProps {
   connectionState: DeviceConnectionState;
   lastSeen?: string;
   isRelayNode?: boolean;
+  onConnect?: () => void;
+  onDisconnect?: () => void;
 }
 
 export const DeviceCard: React.FC<DeviceItemProps> = ({
@@ -21,6 +23,8 @@ export const DeviceCard: React.FC<DeviceItemProps> = ({
   connectionState,
   lastSeen = 'Just now',
   isRelayNode = true,
+  onConnect,
+  onDisconnect,
 }) => {
   const getStateBadge = () => {
     switch (connectionState) {
@@ -28,6 +32,8 @@ export const DeviceCard: React.FC<DeviceItemProps> = ({
         return {text: 'LINK ACTIVE', color: THEME.colors.success};
       case 'connecting':
         return {text: 'NEGOTIATING', color: THEME.colors.warning};
+      case 'disconnected':
+        return {text: 'DISCONNECTED', color: THEME.colors.textMuted};
       case 'discovered':
       default:
         return {text: 'DISCOVERED', color: THEME.colors.signal};
@@ -63,6 +69,21 @@ export const DeviceCard: React.FC<DeviceItemProps> = ({
             <View style={styles.relayBadge}>
               <Text style={styles.relayBadgeText}>RELAY CAPABLE</Text>
             </View>
+          ) : null}
+          {connectionState === 'connected' && onDisconnect ? (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={onDisconnect}
+              style={[styles.actionBtn, styles.actionBtnDisconnect]}>
+              <Text style={styles.actionBtnText}>DISCONNECT</Text>
+            </TouchableOpacity>
+          ) : connectionState === 'discovered' && onConnect ? (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={onConnect}
+              style={styles.actionBtn}>
+              <Text style={styles.actionBtnText}>CONNECT</Text>
+            </TouchableOpacity>
           ) : null}
         </View>
       </View>
@@ -141,5 +162,23 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '700',
     color: THEME.colors.signal,
+  },
+  actionBtn: {
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 4,
+    backgroundColor: THEME.colors.signalDark,
+  },
+  actionBtnDisconnect: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    borderWidth: 1,
+    borderColor: THEME.colors.emergency,
+  },
+  actionBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#ffffff',
+    letterSpacing: 0.5,
   },
 });
