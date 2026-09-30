@@ -121,18 +121,18 @@ Standard Bluetooth Low Energy (BLE) and Wi-Fi Direct **do not natively implement
 
 ---
 
-## 7. Technology Stack (Planned / To Be Finalized)
+## 7. Technology Stack (Finalized in Phase 1)
 
-> *Note: The exact technology stack options are under architectural review and will be finalized in Phase 1 setup.*
-
-| Component | Target Candidates | Rationale |
+| Component | Finalized Technology | Status / Rationale |
 | :--- | :--- | :--- |
-| **Mobile Core Framework** | React Native (TypeScript) **OR** Flutter (Dart) | Cross-platform UI velocity, native module bridging for low-level radio access, active offline libraries. |
-| **P2P Radios** | Native Android BLE API (`android.bluetooth.le`) & Wi-Fi P2P (`android.net.wifi.p2p`) | Direct access to hardware GATT servers, L2CAP channels, and Wi-Fi Direct group owner negotiation. |
-| **Local Offline Storage** | SQLite / WatermelonDB / MMKV | High write throughput, transactional consistency for packet queues, crash-resilience. |
-| **Offline Mapping Engine** | MapLibre Native / Mapbox Offline / Leaflet with local vector/raster MBTiles | Complete offline rendering of OpenStreetMap vector tiles from local assets without internet requests. |
-| **Cryptography** | TweetNaCl / libsodium (Ed25519, SHA-256) | Lightweight public-key signing and packet verification with minimal CPU overhead. |
-| **Hardware Hardware APIs** | Android `CameraManager` (Torch Mode), Android `LocationManager` (Fused Location / Raw GPS) | Direct hardware control for Morse SOS and hardware satellite GNSS fixes. |
+| **Mobile Core Framework** | **React Native (v0.73.6) + TypeScript (v5.0.4)** | Configured & initialized in Phase 1. Native Android module bridging for BLE/Wi-Fi Direct. |
+| **Mobile Target Platform** | **Android (API Level 26+ / Compile SDK 34)** | Configured in Gradle baseline (`android/app/build.gradle`). |
+| **P2P Radios** | Native Android BLE API (`android.bluetooth.le`) & Wi-Fi P2P (`android.net.wifi.p2p`) | Planned for Phase 3. Native GATT server, L2CAP channels, and Wi-Fi Direct group owner negotiation. |
+| **Local Offline Storage** | SQLite / WatermelonDB / MMKV | Planned for Phase 4/5. Transactional consistency for packet queues. |
+| **Offline Mapping Engine** | MapLibre Native / Leaflet with local vector/raster MBTiles | Planned for Phase 6. Complete offline rendering of OpenStreetMap vector tiles from local assets. |
+| **Cryptography** | TweetNaCl / libsodium (Ed25519, SHA-256) | Planned for Phase 9. Lightweight public-key signing and packet verification. |
+| **Hardware APIs** | Android `CameraManager` (Torch Mode), Android `LocationManager` (Raw GNSS) | Planned for Phase 4/8. Direct hardware control for Morse SOS and satellite GNSS fixes. |
+
 
 ---
 
