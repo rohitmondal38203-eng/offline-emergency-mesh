@@ -36,6 +36,23 @@ export class BleServiceManager {
   private onErrorCallback: ((error: string) => void) | null = null;
 
   /**
+   * Returns the underlying BleManager instance for GATT operations.
+   */
+  public getBleManager(): BleManager | null {
+    if (!this.manager) {
+      this.initialize();
+    }
+    return this.manager;
+  }
+
+  /**
+   * Returns list of currently discovered peers.
+   */
+  public getDiscoveredPeers(): BlePeer[] {
+    return Array.from(this.discoveredPeersMap.values());
+  }
+
+  /**
    * Initializes the BleManager singleton and begins radio state observation.
    */
   public initialize(

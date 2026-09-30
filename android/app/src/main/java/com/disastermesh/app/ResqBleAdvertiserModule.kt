@@ -2,7 +2,14 @@ package com.disastermesh.app
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattServer
+import android.bluetooth.BluetoothGattServerCallback
+import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -12,6 +19,7 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.ParcelUuid
+import android.util.Base64
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -19,6 +27,8 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableMap
+import com.facebook.react.modules.core.DeviceEventManagerModule
+import java.io.File
 import java.util.UUID
 import kotlin.random.Random
 
@@ -27,10 +37,14 @@ class ResqBleAdvertiserModule(private val reactContext: ReactApplicationContext)
 
     private val PREFS_NAME = "resq_mesh_identity"
     private val KEY_PEER_ID = "peer_id"
+    private val MESH_STORE_FILE = "resq_mesh_store.json"
 
     private var advertiser: BluetoothLeAdvertiser? = null
     private var advertiseCallback: AdvertiseCallback? = null
     private var isCurrentlyAdvertising = false
+
+    private var gattServer: BluetoothGattServer? = null
+    private var isGattServerActive = false
 
     override fun getName(): String = "ResqBleAdvertiser"
 
@@ -215,4 +229,188 @@ class ResqBleAdvertiserModule(private val reactContext: ReactApplicationContext)
             promise.reject("STOP_ERROR", e.localizedMessage, e)
         }
     }
+
+    // ==========================================
+    // PHASE 4: GATT SERVER & MESH DATA RECEPTION
+    // ==========================================
+
+    @ReactMethod
+    fun startGattServer(serviceUuidStr: String, charUuidStr: String, promise: Promise) {
+        try {
+            if (isGattServerActive && gattServer != null) {
+                promise.resolve(true)
+                return
+            }
+
+            val manager = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            if (manager == null) {
+                promise.reject("NO_BLUETOOTH", "BluetoothManager not available")
+                return
+            }
+
+            val callback = object : BluetoothGattServerCallback() {
+                override fun onCharacteristicWriteRequest(
+                    device: BluetoothDevice,
+                    requestId: Int,
+                    characteristic: BluetoothGattCharacteristic,
+                    preparedWrite: Boolean,
+                    responseNeeded: Boolean,
+                    offset: Int,
+                    value: ByteArray?
+                ) {
+                    super.onCharacteristicWriteRequest(
+                        device,
+                        requestId,
+                        characteristic,
+                        preparedWrite,
+                        responseNeeded,
+                        offset,
+                        value
+                    )
+
+                    // Acknowledge GATT write if requested by client
+                    if (responseNeeded) {
+                        try {
+                            gattServer?.sendResponse(
+                                device,
+                                requestId,
+                                BluetoothGatt.GATT_SUCCESS,
+                                offset,
+                                value
+                            )
+                        } catch (_: Exception) {}
+                    }
+
+                    // Forward incoming data payload to React Native layer
+                    if (value != null && value.isNotEmpty()) {
+                        val base64Data = Base64.encodeToString(value, Base64.NO_WRAP)
+                        val params = Arguments.createMap().apply {
+                            putString("senderAddress", device.address)
+                            putString("data", base64Data)
+                            putString("characteristicUuid", characteristic.uuid.toString())
+                        }
+                        reactContext
+                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                            ?.emit("onMeshGattPacketReceived", params)
+                    }
+                }
+
+                override fun onConnectionStateChange(
+                    device: BluetoothDevice,
+                    status: Int,
+                    newState: Int
+                ) {
+                    super.onConnectionStateChange(device, status, newState)
+                    val params = Arguments.createMap().apply {
+                        putString("deviceAddress", device.address)
+                        putBoolean("connected", newState == BluetoothProfile.STATE_CONNECTED)
+                    }
+                    reactContext
+                        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                        ?.emit("onMeshGattConnectionChange", params)
+                }
+            }
+
+            gattServer = manager.openGattServer(reactContext, callback)
+            if (gattServer == null) {
+                promise.reject("GATT_ERROR", "Failed to open BluetoothGattServer")
+                return
+            }
+
+            val serviceUuid = UUID.fromString(serviceUuidStr)
+            val charUuid = UUID.fromString(charUuidStr)
+
+            val service = BluetoothGattService(
+                serviceUuid,
+                BluetoothGattService.SERVICE_TYPE_PRIMARY
+            )
+
+            val characteristic = BluetoothGattCharacteristic(
+                charUuid,
+                BluetoothGattCharacteristic.PROPERTY_WRITE or
+                    BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE or
+                    BluetoothGattCharacteristic.PROPERTY_READ,
+                BluetoothGattCharacteristic.PERMISSION_WRITE or
+                    BluetoothGattCharacteristic.PERMISSION_READ
+            )
+
+            service.addCharacteristic(characteristic)
+            gattServer?.addService(service)
+
+            isGattServerActive = true
+            promise.resolve(true)
+        } catch (e: Exception) {
+            isGattServerActive = false
+            promise.reject("GATT_SERVER_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun stopGattServer(promise: Promise) {
+        try {
+            if (gattServer != null) {
+                gattServer?.close()
+                gattServer = null
+            }
+            isGattServerActive = false
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("STOP_GATT_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun isGattServerRunning(promise: Promise) {
+        promise.resolve(isGattServerActive)
+    }
+
+    // ==========================================
+    // PHASE 4: LOCAL PERSISTENT STORAGE BRIDGE
+    // ==========================================
+
+    @ReactMethod
+    fun saveMeshStore(jsonString: String, promise: Promise) {
+        try {
+            val file = File(reactContext.filesDir, MESH_STORE_FILE)
+            file.writeText(jsonString, Charsets.UTF_8)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("SAVE_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun loadMeshStore(promise: Promise) {
+        try {
+            val file = File(reactContext.filesDir, MESH_STORE_FILE)
+            if (file.exists()) {
+                val content = file.readText(Charsets.UTF_8)
+                promise.resolve(content)
+            } else {
+                promise.resolve("{}")
+            }
+        } catch (e: Exception) {
+            promise.reject("LOAD_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun clearMeshStore(promise: Promise) {
+        try {
+            val file = File(reactContext.filesDir, MESH_STORE_FILE)
+            if (file.exists()) {
+                file.delete()
+            }
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("CLEAR_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    // React Native NativeEventEmitter requirement
+    @ReactMethod
+    fun addListener(eventName: String) {}
+
+    @ReactMethod
+    fun removeListeners(count: Int) {}
 }

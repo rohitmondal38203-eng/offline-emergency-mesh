@@ -16,8 +16,8 @@
 | **Android Gradle Baseline** | **CONFIGURED** | 100% | `build.gradle`, `app/build.gradle`, permissions ready; Debug APK built cleanly. |
 | **Physical Device Verification** | **VERIFIED** | 100% | APK installed on physical Xiaomi device (2201116SI, Android 13) via ADB stream install. |
 | **BLE Discovery & Presence (FR-1 / Phase 3)** | **COMPLETED** | 100% | Real BLE scanning (`react-native-ble-plx`), native advertiser (`BluetoothLeAdvertiser`), stable non-PII peer identity. |
-| **Distress Beacon Generation (FR-3)** | **NOT STARTED** | 0% | Planned for Phase 4. Form UI & alert modal completed. Radio transmission pending. |
-| **Multi-Hop Relay Engine (FR-2)** | **NOT STARTED** | 0% | Planned for Phase 5. Store-and-forward architecture designed. |
+| **Mesh Routing & Store-and-Forward (FR-2 / Phase 4)** | **COMPLETED** | 100% | BLE GATT transport, chunking, message deduplication, TTL/hop-limit, persistent queue, and telemetry. |
+| **Distress Beacon Generation (FR-3)** | **NOT STARTED** | 0% | Planned for Phase 5. Form UI & alert modal completed. Radio transmission pending. |
 | **Offline Vector Map (FR-4)** | **NOT STARTED** | 0% | Planned for Phase 6. Tactical grid & shelter catalog UI completed. Tiles pending. |
 | **Hazard Broadcast Feed (FR-5)** | **NOT STARTED** | 0% | Planned for Phase 7. Bulletin feed UI completed. Responder authoring pending. |
 | **SOS Flashlight Strobe (FR-6)** | **NOT STARTED** | 0% | Planned for Phase 8. Morse pulse UI visualizer completed. Camera2 bridge pending. |
@@ -41,14 +41,16 @@
   * [x] Basic peer link connection and clean disconnection (`src/services/ble/bleService.ts`).
   * [ ] Wi-Fi Direct P2P Group Owner negotiation (high-volume data - Planned for Phase 5).
 
-* **[ ] FR-2: Multi-Hop Distress Packet Relay**
-  * [x] Standard envelope interface defined (`src/models/types.ts`).
-  * [x] Router service placeholder created (`src/services/mesh/index.ts`).
-  * [ ] Application-layer packet envelope (UUID, Origin, TTL, Hops, Payload, Signature).
-  * [ ] Store-and-forward persistence queue in local storage.
-  * [ ] Seen-packet hash deduplication table (anti-looping).
-  * [ ] Automatic TTL decrement and hop count increment.
-  * [ ] Multi-hop relay validation across 3 physical devices ($A \to B \to C$).
+* **[x] FR-2: Mesh Routing & Store-and-Forward Engine (Phase 4 Completed)**
+  * [x] Standard envelope interface implemented (`src/services/mesh/types.ts`).
+  * [x] Router & store-and-forward engine implemented (`src/services/mesh/meshRouter.ts`).
+  * [x] Application-layer packet envelope (UUID, Origin, TTL, Hops, Payload, Classification).
+  * [x] Store-and-forward persistence queue in local storage (`src/services/mesh/meshStore.ts`).
+  * [x] Seen-packet hash deduplication table (anti-looping & anti-echo).
+  * [x] Automatic TTL decrement and hop count increment.
+  * [x] BLE GATT chunking and transport protocol (`src/services/mesh/meshTransport.ts`).
+  * [x] Developer telemetry & test message origination UI (`src/screens/NearbyDevicesScreen.tsx`).
+  * [ ] Multi-hop relay physical validation across 3 physical devices ($A \to B \to C$ - Physical test pending 3 hardware devices).
 
 * **[ ] FR-3: Distress Beacon Generation**
   * [x] Beacon schema defined (`src/models/types.ts`).

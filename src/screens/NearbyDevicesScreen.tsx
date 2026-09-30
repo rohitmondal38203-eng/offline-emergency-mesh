@@ -26,6 +26,13 @@ import {
   BlePermissionStatus,
   PeerIdentityService,
 } from '../services/ble';
+import {
+  meshRouter,
+  meshStore,
+  MeshTelemetry,
+  StoredMeshMessage,
+  MessageDeliveryStatus,
+} from '../services/mesh';
 
 interface NearbyDevicesScreenProps {
   navigation: NavigationProp;
@@ -43,11 +50,17 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
   const [discoveredPeers, setDiscoveredPeers] = useState<BlePeer[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Initialize BLE service, read identity, and check permissions
+  // Phase 4 Mesh State
+  const [meshTelemetry, setMeshTelemetry] = useState<MeshTelemetry>(
+    meshStore.getTelemetry('RESQ-MESH:----')
+  );
+  const [recentMessages, setRecentMessages] = useState<StoredMeshMessage[]>([]);
+
+  // Initialize BLE service, mesh router, identity, and permissions
   useEffect(() => {
     let isMounted = true;
 
-    async function setupBle() {
+    async function setupBleAndMesh() {
       // 1. Load stable peer identity
       const peerId = await PeerIdentityService.getLocalPeerId();
       if (isMounted) {
@@ -82,11 +95,27 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
         setRadioState(initialRadio);
       }
 
-      // 5. Register BLE service callbacks
+      // 5. Initialize Phase 4 Mesh Router
+      await meshRouter.initialize(peerId);
+      if (isMounted) {
+        setMeshTelemetry(meshStore.getTelemetry(peerId));
+        setRecentMessages(meshStore.getAllMessages());
+      }
+
+      meshRouter.setOnTelemetryUpdated((telem: MeshTelemetry) => {
+        if (isMounted) {
+          setMeshTelemetry(telem);
+          setRecentMessages(meshStore.getAllMessages());
+        }
+      });
+
+      // 6. Register BLE service callbacks
       bleService.setListeners({
         onPeersUpdated: (peers: BlePeer[]) => {
           if (isMounted) {
             setDiscoveredPeers(peers);
+            // Opportunistically trigger store-and-forward relay when peers appear
+            meshRouter.attemptForwardPending().catch(() => {});
           }
         },
         onScanStatusChanged: (scanning: boolean) => {
@@ -102,11 +131,10 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
       });
     }
 
-    setupBle();
+    setupBleAndMesh();
 
     return () => {
       isMounted = false;
-      // Step 10: Screen unmount cleanup - stop scanning to conserve radio battery
       bleService.stopScanning();
     };
   }, []);
@@ -125,7 +153,6 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
   const handleStartScan = async () => {
     setErrorMessage(null);
 
-    // Permission check
     if (permissionStatus !== 'GRANTED') {
       const result = await BlePermissions.requestPermissions();
       setPermissionStatus(result.status);
@@ -135,7 +162,6 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
       }
     }
 
-    // Radio state check
     const currentRadio = await bleService.getRadioState();
     setRadioState(currentRadio);
     if (currentRadio === 'POWERED_OFF') {
@@ -186,10 +212,7 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
   // Connect to a peer
   const handleConnectPeer = useCallback(async (peerId: string) => {
     setErrorMessage(null);
-    const success = await bleService.connectToPeer(peerId);
-    if (!success) {
-      // Error message broadcasted via bleService.onError
-    }
+    await bleService.connectToPeer(peerId);
   }, []);
 
   // Disconnect from a peer
@@ -200,6 +223,23 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
   // Clear discovered peers
   const handleClearPeers = () => {
     bleService.clearDiscoveredPeers();
+  };
+
+  // Phase 4: Send Test Mesh Message
+  const handleSendTestMessage = async () => {
+    setErrorMessage(null);
+    try {
+      const count = meshTelemetry.totalMessages + 1;
+      const text = `TEST #${String(count).padStart(3, '0')}: Hello from RESQ mesh [${localPeerId.slice(-4)}]`;
+      await meshRouter.sendTestMessage(text);
+      Alert.alert(
+        'Mesh Message Enqueued',
+        `Packet created with TTL=5 and saved to local persistent queue.\n\nPayload: "${text}"\n\nIf eligible peers are in range, store-and-forward will transmit automatically.`,
+        [{text: 'OK'}]
+      );
+    } catch (e: any) {
+      setErrorMessage(`Failed to send test message: ${e?.message || e}`);
+    }
   };
 
   // Format radio status for display
@@ -218,13 +258,27 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
     }
   };
 
+  const getStatusColor = (status: MessageDeliveryStatus) => {
+    switch (status) {
+      case 'DELIVERED':
+        return THEME.colors.success;
+      case 'FORWARDED':
+        return THEME.colors.signal;
+      case 'EXPIRED':
+        return THEME.colors.emergency;
+      case 'PENDING':
+      default:
+        return THEME.colors.warning;
+    }
+  };
+
   const radioBadge = getRadioDisplay();
 
   return (
     <View style={styles.container}>
       <AppHeader
-        title="Nearby Devices"
-        subtitle="Phase 3: BLE Discovery & Presence"
+        title="Nearby Devices & Mesh"
+        subtitle="Phase 4: Store-and-Forward Relay"
         showBack
         onBack={() => navigation.goBack()}
       />
@@ -396,6 +450,128 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
             ))}
           </View>
         )}
+
+        {/* ========================================================= */}
+        {/* PHASE 4: MESH ROUTING, STORE-AND-FORWARD & TELEMETRY */}
+        {/* ========================================================= */}
+        <View style={styles.meshSectionContainer}>
+          <SectionHeader
+            title="Mesh Relay & Store-and-Forward"
+            badge={`${meshTelemetry.pendingCount} PENDING`}
+          />
+
+          {/* Mesh Telemetry Counters */}
+          <StatusCard
+            variant="default"
+            items={[
+              {
+                label: 'Total Packets',
+                value: `${meshTelemetry.totalMessages}`,
+                color: THEME.colors.textPrimary,
+              },
+              {
+                label: 'Pending Relay',
+                value: `${meshTelemetry.pendingCount}`,
+                color:
+                  meshTelemetry.pendingCount > 0
+                    ? THEME.colors.warning
+                    : THEME.colors.textMuted,
+              },
+              {
+                label: 'Forwarded',
+                value: `${meshTelemetry.forwardedCount}`,
+                color: THEME.colors.signal,
+              },
+              {
+                label: 'Delivered',
+                value: `${meshTelemetry.deliveredCount}`,
+                color: THEME.colors.success,
+              },
+              {
+                label: 'Expired (TTL)',
+                value: `${meshTelemetry.expiredCount}`,
+                color:
+                  meshTelemetry.expiredCount > 0
+                    ? THEME.colors.emergency
+                    : THEME.colors.textMuted,
+              },
+            ]}
+          />
+
+          {/* Send Test Mesh Message Button */}
+          <View style={styles.testActionContainer}>
+            <EmergencyButton
+              title="✉️ SEND TEST MESH MESSAGE"
+              subtitle="Originate generic Phase 4 test packet with TTL=5"
+              variant="emergency"
+              onPress={handleSendTestMessage}
+            />
+          </View>
+
+          {/* Last Received Message Card */}
+          {meshTelemetry.lastReceivedMessage && (
+            <View style={styles.lastMessageCard}>
+              <View style={styles.lastMessageHeader}>
+                <Text style={styles.lastMessageLabel}>LAST RECEIVED MESH PACKET</Text>
+                <View style={styles.ttlBadge}>
+                  <Text style={styles.ttlBadgeText}>
+                    TTL: {meshTelemetry.lastReceivedMessage.ttl} • HOPS: {meshTelemetry.lastReceivedMessage.hopCount}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.lastMessageOrigin}>
+                From: {meshTelemetry.lastReceivedMessage.originNodeId}
+              </Text>
+              <Text style={styles.lastMessageId} numberOfLines={1}>
+                ID: {meshTelemetry.lastReceivedMessage.messageId}
+              </Text>
+              <View style={styles.payloadBox}>
+                <Text style={styles.payloadText}>
+                  {typeof meshTelemetry.lastReceivedMessage.payload === 'string'
+                    ? meshTelemetry.lastReceivedMessage.payload
+                    : JSON.stringify(meshTelemetry.lastReceivedMessage.payload)}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Local Persistent Queue List */}
+          {recentMessages.length > 0 && (
+            <View style={styles.queueContainer}>
+              <Text style={styles.queueTitle}>
+                LOCAL PERSISTENT QUEUE ({recentMessages.length} STORED):
+              </Text>
+              {recentMessages.slice(0, 5).map(item => (
+                <View key={item.message.messageId} style={styles.queueItemCard}>
+                  <View style={styles.queueItemHeader}>
+                    <Text style={styles.queueItemOrigin}>{item.message.originNodeId}</Text>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        {borderColor: getStatusColor(item.status)},
+                      ]}>
+                      <Text
+                        style={[
+                          styles.statusBadgeText,
+                          {color: getStatusColor(item.status)},
+                        ]}>
+                        {item.status}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.queueItemPayload} numberOfLines={1}>
+                    {typeof item.message.payload === 'string'
+                      ? item.message.payload
+                      : JSON.stringify(item.message.payload)}
+                  </Text>
+                  <Text style={styles.queueItemMeta}>
+                    Hops: {item.message.hopCount} • TTL: {item.message.ttl} • Relayed to: {item.forwardedToPeers.length} peer(s)
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
       </ScrollView>
     </View>
   );
@@ -579,5 +755,117 @@ const styles = StyleSheet.create({
   },
   peerListContainer: {
     marginVertical: THEME.spacing.xs,
+  },
+  meshSectionContainer: {
+    marginTop: THEME.spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: THEME.colors.surfaceBorder,
+    paddingTop: THEME.spacing.md,
+  },
+  testActionContainer: {
+    marginVertical: THEME.spacing.sm,
+  },
+  lastMessageCard: {
+    backgroundColor: THEME.colors.surface,
+    borderRadius: THEME.borderRadius.md,
+    padding: THEME.spacing.md,
+    borderWidth: 1,
+    borderColor: THEME.colors.signal,
+    marginVertical: THEME.spacing.xs,
+  },
+  lastMessageHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  lastMessageLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: THEME.colors.signal,
+    letterSpacing: 0.5,
+  },
+  ttlBadge: {
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 3,
+  },
+  ttlBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: THEME.colors.signal,
+  },
+  lastMessageOrigin: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.colors.textPrimary,
+    marginTop: 2,
+  },
+  lastMessageId: {
+    fontSize: 10,
+    color: THEME.colors.textMuted,
+    marginTop: 1,
+  },
+  payloadBox: {
+    backgroundColor: THEME.colors.surfaceRaised,
+    padding: THEME.spacing.sm,
+    borderRadius: THEME.borderRadius.sm,
+    marginTop: 8,
+  },
+  payloadText: {
+    fontSize: 12,
+    color: THEME.colors.textPrimary,
+    fontWeight: '500',
+  },
+  queueContainer: {
+    marginTop: THEME.spacing.sm,
+  },
+  queueTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME.colors.textMuted,
+    marginBottom: 6,
+    letterSpacing: 0.5,
+  },
+  queueItemCard: {
+    backgroundColor: THEME.colors.surface,
+    padding: THEME.spacing.sm,
+    borderRadius: THEME.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: THEME.colors.surfaceBorder,
+    marginVertical: 3,
+  },
+  queueItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  queueItemOrigin: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: THEME.colors.textPrimary,
+  },
+  statusBadge: {
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 3,
+    backgroundColor: THEME.colors.surfaceRaised,
+  },
+  statusBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  queueItemPayload: {
+    fontSize: 11,
+    color: THEME.colors.textSecondary,
+    marginTop: 2,
+  },
+  queueItemMeta: {
+    fontSize: 10,
+    color: THEME.colors.textMuted,
+    marginTop: 3,
   },
 });
