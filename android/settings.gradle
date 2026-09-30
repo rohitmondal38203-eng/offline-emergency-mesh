@@ -1,0 +1,3 @@
+rootProject.name = 'app08-disaster-mesh'
+include ':app'
+includeBuild('../node_modules/@react-native/gradle-plugin')

@@ -1,0 +1,9 @@
+<resources>
+    <!-- Base application theme -->
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <!-- Customize theme colors for emergency dark mode -->
+        <item name="android:statusBarColor">#0b0f19</item>
+        <item name="android:navigationBarColor">#0b0f19</item>
+        <item name="android:windowBackground">#0b0f19</item>
+    </style>
+</resources>
