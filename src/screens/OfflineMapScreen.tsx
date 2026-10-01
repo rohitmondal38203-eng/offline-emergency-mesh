@@ -1,8 +1,21 @@
-import React from 'react';
-import {ScrollView, StyleSheet, Text, View} from 'react-native';
+import React, {useCallback, useEffect, useState} from 'react';
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import {THEME} from '../config/theme';
-import {AppHeader, PlaceholderNotice, SectionHeader, StatusCard} from '../components';
+import {AppHeader, SectionHeader, StatusCard} from '../components';
 import {NavigationProp} from '../navigation/types';
+import {locationService, GeoLocation} from '../services/location';
+import {
+  DatasetStats,
+  mapService,
+  NearestFacilityResult,
+} from '../services/map';
 
 interface OfflineMapScreenProps {
   navigation: NavigationProp;
@@ -11,121 +24,337 @@ interface OfflineMapScreenProps {
 export const OfflineMapScreen: React.FC<OfflineMapScreenProps> = ({
   navigation,
 }) => {
+  // GPS State
+  const [gpsAvailable, setGpsAvailable] = useState<boolean | null>(null);
+  const [location, setLocation] = useState<GeoLocation | null>(null);
+  const [isGpsLoading, setIsGpsLoading] = useState<boolean>(false);
+  const [gpsError, setGpsError] = useState<string | null>(null);
+
+  // Dataset State
+  const [datasetStats, setDatasetStats] = useState<DatasetStats>(
+    mapService.getDatasetStats()
+  );
+  const [isDatasetLoading, setIsDatasetLoading] = useState<boolean>(true);
+
+  // Nearest Facilities
+  const [nearestShelter, setNearestShelter] =
+    useState<NearestFacilityResult | null>(null);
+  const [nearestHospital, setNearestHospital] =
+    useState<NearestFacilityResult | null>(null);
+
+  // 1. Load Bundled Map Dataset
+  const loadDataset = useCallback(async () => {
+    setIsDatasetLoading(true);
+    try {
+      const stats = await mapService.loadOfflineMapDataset();
+      setDatasetStats(stats);
+    } catch (e: any) {
+      console.error('[OfflineMapScreen] Dataset load failed:', e);
+    } finally {
+      setIsDatasetLoading(false);
+    }
+  }, []);
+
+  // 2. Acquire Offline GPS Fix
+  const handleAcquireLocation = useCallback(async () => {
+    setIsGpsLoading(true);
+    setGpsError(null);
+    try {
+      const result = await locationService.getCurrentLocation(15000);
+      if (result.success && result.location) {
+        setLocation(result.location);
+        setGpsAvailable(true);
+
+        // Calculate nearest facilities using real bundled coordinates
+        const shelterRes = mapService.getNearestFacility(
+          result.location.latitude,
+          result.location.longitude,
+          'SHELTER'
+        );
+        const hospitalRes = mapService.getNearestFacility(
+          result.location.latitude,
+          result.location.longitude,
+          'HOSPITAL'
+        );
+
+        setNearestShelter(shelterRes);
+        setNearestHospital(hospitalRes);
+      } else {
+        setGpsError(result.error?.message || 'GPS fix unavailable');
+        setNearestShelter(null);
+        setNearestHospital(null);
+      }
+    } catch (e: any) {
+      setGpsError(e?.message || 'Location acquisition failed');
+    } finally {
+      setIsGpsLoading(false);
+    }
+  }, []);
+
+  // Initial load
+  useEffect(() => {
+    loadDataset();
+
+    locationService.isGpsAvailable().then(avail => {
+      setGpsAvailable(avail);
+      if (avail) {
+        handleAcquireLocation();
+      }
+    });
+  }, [loadDataset, handleAcquireLocation]);
+
   return (
     <View style={styles.container}>
       <AppHeader
-        title="Offline Vector Map"
-        subtitle="Pre-cached Local GeoJSON & Shelters"
+        title="Offline Map & GIS"
+        subtitle="South 24 Parganas Dataset"
         showBack
         onBack={() => navigation.goBack()}
       />
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Phase Notice */}
-        <PlaceholderNotice
-          phase="Phase 6"
-          featureName="FR-4: Offline Vector Map & MBTiles"
-          description="Vector tiles bundled inside APK assets will render roads, topographic safe contours, and emergency relief shelters with zero online tile fetches."
-          hardwareDependency="Embedded Vector MBTiles & Local OpenGL Renderer"
+        {/* Dataset Status Section */}
+        <SectionHeader
+          title="Bundled Offline Dataset"
+          badge={
+            isDatasetLoading
+              ? 'LOADING'
+              : datasetStats.isReady
+              ? 'READY'
+              : 'ERROR'
+          }
         />
 
-        {/* Map Telemetry */}
+        {isDatasetLoading ? (
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="small" color="#0066FF" />
+            <Text style={styles.loadingText}>
+              Loading South 24 Parganas vector datasets from device storage...
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.datasetCard}>
+            <View style={styles.datasetHeaderRow}>
+              <View style={styles.datasetHeaderLeft}>
+                <Text style={styles.datasetTitle}>SOUTH 24 PARGANAS GIS DATASET</Text>
+                <Text style={styles.datasetSubtitle}>
+                  Offline dataset loaded from device storage
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.statusBadge,
+                  datasetStats.isReady
+                    ? styles.statusBadgeReady
+                    : styles.statusBadgeError,
+                ]}>
+                <Text
+                  style={[
+                    styles.statusBadgeText,
+                    datasetStats.isReady
+                      ? styles.statusTextReady
+                      : styles.statusTextError,
+                  ]}>
+                  {datasetStats.isReady ? 'READY' : 'ERROR'}
+                </Text>
+              </View>
+            </View>
+
+            {datasetStats.error ? (
+              <View style={styles.errorBanner}>
+                <Text style={styles.errorBannerText}>
+                  ⚠️ {datasetStats.error}
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Feature Statistics Grid */}
+            <View style={styles.statsGrid}>
+              <View style={styles.statBox}>
+                <Text style={styles.statLabel}>Boundaries</Text>
+                <Text style={styles.statVal}>
+                  {datasetStats.boundariesCount}
+                </Text>
+                <Text style={styles.statSub}>District & Blocks</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={styles.statLabel}>Waterways</Text>
+                <Text style={styles.statVal}>
+                  {datasetStats.waterwaysCount}
+                </Text>
+                <Text style={styles.statSub}>Rivers & Coast</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={styles.statLabel}>Roads</Text>
+                <Text style={styles.statVal}>{datasetStats.roadsCount}</Text>
+                <Text style={styles.statSub}>Evac Corridors</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={styles.statLabel}>Facilities</Text>
+                <Text style={styles.statVal}>
+                  {datasetStats.facilitiesCount}
+                </Text>
+                <Text style={styles.statSub}>Verified Points</Text>
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            {/* Detailed Facility Breakdown */}
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>🏥 Hospitals & Clinics:</Text>
+              <Text style={styles.detailVal}>{datasetStats.hospitalsCount}</Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>🏛️ Cyclone Shelters (MPCS):</Text>
+              <Text style={styles.detailVal}>{datasetStats.sheltersCount}</Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>🚨 Emergency Points & Ghats:</Text>
+              <Text style={styles.detailVal}>
+                {datasetStats.emergencyPointsCount}
+              </Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>⚡ Load Duration:</Text>
+              <Text style={styles.detailVal}>{datasetStats.loadDurationMs} ms</Text>
+            </View>
+          </View>
+        )}
+
+        {/* Offline GPS Latch Section */}
+        <SectionHeader
+          title="Offline GPS Location"
+          badge={location ? 'FIX LOCKED' : isGpsLoading ? 'SEARCHING' : 'IDLE'}
+        />
+
         <StatusCard
-          variant="warning"
+          variant={location ? 'info' : gpsError ? 'emergency' : 'default'}
           items={[
-            {label: 'Tile Archive Status', value: 'Pre-cache pending (Phase 6)', color: THEME.colors.warning},
-            {label: 'GPS Location Fix', value: 'Unavailable (Offline)', color: THEME.colors.textMuted},
-            {label: 'Cataloged Shelters', value: '4 Safe Points (GeoJSON)', color: THEME.colors.signal},
-            {label: 'High-Ground Safe Zones', value: '2 Designated Zones', color: THEME.colors.success},
+            {
+              label: 'GPS Hardware Status',
+              value:
+                gpsAvailable === null
+                  ? 'Checking...'
+                  : gpsAvailable
+                  ? 'Active / Available'
+                  : 'Disabled in Settings',
+              color: gpsAvailable ? THEME.colors.success : THEME.colors.warning,
+            },
+            {
+              label: 'Latitude',
+              value: location ? `${location.latitude.toFixed(6)}°` : 'No fix yet',
+              color: location ? THEME.colors.textPrimary : THEME.colors.textMuted,
+            },
+            {
+              label: 'Longitude',
+              value: location ? `${location.longitude.toFixed(6)}°` : 'No fix yet',
+              color: location ? THEME.colors.textPrimary : THEME.colors.textMuted,
+            },
+            {
+              label: 'Accuracy',
+              value: location ? `±${location.accuracy} meters` : 'N/A',
+              color: location ? THEME.colors.signal : THEME.colors.textMuted,
+            },
           ]}
         />
 
-        {/* TACTICAL MAP CANVAS PLACEHOLDER */}
-        <View style={styles.mapCanvas}>
-          {/* Tactical Grid Background */}
-          <View style={styles.gridOverlay}>
-            <View style={styles.gridLineH} />
-            <View style={styles.gridLineH} />
-            <View style={styles.gridLineV} />
-            <View style={styles.gridLineV} />
+        {gpsError ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>⚠️ {gpsError}</Text>
           </View>
+        ) : null}
 
-          {/* Compass / Orientation */}
-          <View style={styles.compassBox}>
-            <Text style={styles.compassText}>▲ N</Text>
-            <Text style={styles.compassCoords}>GRID: DISASTER SECTOR 4</Text>
-          </View>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          disabled={isGpsLoading}
+          onPress={handleAcquireLocation}
+          style={[styles.gpsActionBtn, isGpsLoading && styles.btnDisabled]}>
+          {isGpsLoading ? (
+            <ActivityIndicator size="small" color="#FFFFFF" style={{marginRight: 8}} />
+          ) : (
+            <Text style={styles.gpsActionIcon}>📡</Text>
+          )}
+          <Text style={styles.gpsActionText}>
+            {isGpsLoading ? 'Acquiring GPS Fix...' : 'Acquire Offline GPS Fix'}
+          </Text>
+        </TouchableOpacity>
 
-          {/* User Location Placeholder Marker */}
-          <View style={styles.userLocationMarker}>
-            <View style={styles.userLocationPulse} />
-            <Text style={styles.userLocationText}>📍 YOUR LOCATION (OFFLINE)</Text>
-          </View>
-
-          {/* Simulated Relief Shelter Marker A */}
-          <View style={[styles.mapPin, styles.pinShelterA]}>
-            <Text style={styles.pinIcon}>⛺</Text>
-            <Text style={styles.pinLabel}>Central High School (Shelter)</Text>
-          </View>
-
-          {/* Simulated Safe High-Ground Zone B */}
-          <View style={[styles.mapPin, styles.pinHighGround]}>
-            <Text style={styles.pinIcon}>⛰️</Text>
-            <Text style={styles.pinLabel}>Stadium Ridge (High Ground: 45m)</Text>
-          </View>
-
-          {/* Central Watermark / Banner */}
-          <View style={styles.canvasNotice}>
-            <Text style={styles.canvasNoticeTitle}>OFFLINE VECTOR ENGINE</Text>
-            <Text style={styles.canvasNoticeSubtitle}>
-              Offline map integration will be implemented in Phase 6.
-            </Text>
-            <Text style={styles.canvasNoticeSub}>
-              Zero Google Maps / Zero Mapbox API network calls.
-            </Text>
-          </View>
-        </View>
-
-        {/* Shelter Legend & Safe Zones */}
+        {/* Nearest Facility Test Section */}
         <SectionHeader
-          title="Cataloged Evacuation Safe Zones"
-          subtitle="Pre-loaded disaster management infrastructure"
+          title="Nearest Verified Emergency Facility"
+          badge={location ? 'CALCULATED' : 'WAITING GPS'}
         />
 
-        <View style={styles.shelterList}>
-          {/* Shelter 1 */}
-          <View style={styles.shelterCard}>
-            <View style={styles.shelterHeader}>
-              <Text style={styles.shelterIcon}>⛺</Text>
-              <View style={styles.shelterTitleCol}>
-                <Text style={styles.shelterName}>District Central Relief Camp</Text>
-                <Text style={styles.shelterType}>Primary Shelter • Medical Facility</Text>
-              </View>
-              <View style={styles.capacityBadge}>
-                <Text style={styles.capacityText}>CAPACITY: 500</Text>
-              </View>
-            </View>
-            <Text style={styles.shelterMeta}>
-              Distance: Approx 1.4 km North-East • Elevation: 28m ASL
-            </Text>
-          </View>
+        <View style={styles.facilityCard}>
+          {location ? (
+            <>
+              {nearestShelter ? (
+                <View style={styles.facilityItem}>
+                  <View style={styles.facilityItemHeader}>
+                    <Text style={styles.facilityTypeBadge}>🏛️ NEAREST CYCLONE SHELTER</Text>
+                    <Text style={styles.facilityDistance}>
+                      {nearestShelter.distanceKm} km
+                    </Text>
+                  </View>
+                  <Text style={styles.facilityName}>
+                    {nearestShelter.facility.name}
+                  </Text>
+                  <Text style={styles.facilityAddress}>
+                    {nearestShelter.facility.address || 'South 24 Parganas'}
+                  </Text>
+                  {nearestShelter.facility.capacity ? (
+                    <Text style={styles.facilityMeta}>
+                      Capacity: {nearestShelter.facility.capacity} persons • Verified
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
 
-          {/* Shelter 2 */}
-          <View style={styles.shelterCard}>
-            <View style={styles.shelterHeader}>
-              <Text style={styles.shelterIcon}>⛰️</Text>
-              <View style={styles.shelterTitleCol}>
-                <Text style={styles.shelterName}>Municipal Stadium Grounds</Text>
-                <Text style={styles.shelterType}>Designated High-Ground Assembly</Text>
-              </View>
-              <View style={[styles.capacityBadge, styles.badgeHighGround]}>
-                <Text style={styles.capacityText}>SAFE ZONE</Text>
-              </View>
+              {nearestHospital ? (
+                <View style={[styles.facilityItem, {marginTop: 10}]}>
+                  <View style={styles.facilityItemHeader}>
+                    <Text style={[styles.facilityTypeBadge, {color: '#2563EB', backgroundColor: '#EFF6FF'}]}>
+                      🏥 NEAREST HOSPITAL
+                    </Text>
+                    <Text style={styles.facilityDistance}>
+                      {nearestHospital.distanceKm} km
+                    </Text>
+                  </View>
+                  <Text style={styles.facilityName}>
+                    {nearestHospital.facility.name}
+                  </Text>
+                  <Text style={styles.facilityAddress}>
+                    {nearestHospital.facility.address || 'South 24 Parganas'}
+                  </Text>
+                  <Text style={styles.facilityMeta}>
+                    Coordinates: {nearestHospital.facility.latitude.toFixed(4)}°, {nearestHospital.facility.longitude.toFixed(4)}° • Verified
+                  </Text>
+                </View>
+              ) : null}
+            </>
+          ) : (
+            <View style={styles.waitingContainer}>
+              <Text style={styles.waitingIcon}>📍</Text>
+              <Text style={styles.waitingNotice}>
+                GPS position unavailable — nearest facility lookup waiting for location.
+              </Text>
             </View>
-            <Text style={styles.shelterMeta}>
-              Distance: Approx 2.1 km East • Elevation: 45m ASL (Flood-Safe)
-            </Text>
-          </View>
+          )}
+        </View>
+
+        {/* Attribution & Legal Notice */}
+        <View style={styles.attributionCard}>
+          <Text style={styles.attributionTitle}>LEGAL ATTRIBUTION & LICENSES</Text>
+          <Text style={styles.attributionText}>
+            Map data © OpenStreetMap contributors, available under the Open Database License (ODbL).
+          </Text>
+          <Text style={styles.attributionSub}>
+            Administrative boundaries based on Survey of India / Census of India records via DataMeet (GODL-India).
+          </Text>
+          <Text style={styles.attributionSub}>
+            Emergency shelter records verified from South 24 Parganas DDMP (NCRMP Stage II).
+          </Text>
         </View>
       </ScrollView>
     </View>
@@ -135,197 +364,264 @@ export const OfflineMapScreen: React.FC<OfflineMapScreenProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: THEME.colors.background,
+    backgroundColor: '#F6F7F9',
   },
   scrollContent: {
-    padding: THEME.spacing.md,
-    paddingBottom: THEME.spacing.xxl,
+    padding: 16,
+    paddingBottom: 32,
   },
-  mapCanvas: {
-    height: 260,
-    backgroundColor: '#070b14',
-    borderRadius: THEME.borderRadius.md,
-    borderWidth: 1,
-    borderColor: THEME.colors.surfaceBorder,
-    marginVertical: THEME.spacing.sm,
-    position: 'relative',
-    overflow: 'hidden',
-    justifyContent: 'center',
+  loadingCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
     alignItems: 'center',
-  },
-  gridOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'space-around',
-    alignItems: 'stretch',
-    opacity: 0.15,
-  },
-  gridLineH: {
-    height: 1,
-    backgroundColor: THEME.colors.signal,
-    width: '100%',
-  },
-  gridLineV: {
-    width: 1,
-    backgroundColor: THEME.colors.signal,
-    height: '100%',
-    position: 'absolute',
-    left: '50%',
-  },
-  compassBox: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    backgroundColor: 'rgba(17, 24, 39, 0.8)',
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
     borderWidth: 1,
-    borderColor: THEME.colors.surfaceBorder,
+    borderColor: '#EDF0F3',
+    marginVertical: 8,
   },
-  compassText: {
+  loadingText: {
+    marginTop: 10,
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+  },
+  datasetCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#EDF0F3',
+    marginVertical: 8,
+    shadowColor: '#0F172A',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  datasetHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  datasetHeaderLeft: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  datasetTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: 0.5,
+  },
+  datasetSubtitle: {
+    fontSize: 12,
+    color: '#059669',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  statusBadgeReady: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  statusBadgeError: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  statusBadgeText: {
     fontSize: 10,
-    fontWeight: '900',
-    color: THEME.colors.signal,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
-  compassCoords: {
-    fontSize: 8,
-    color: THEME.colors.textMuted,
+  statusTextReady: {
+    color: '#059669',
+  },
+  statusTextError: {
+    color: '#DC2626',
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginVertical: 8,
+  },
+  statBox: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 8,
+    alignItems: 'center',
+    marginHorizontal: 3,
+    borderWidth: 1,
+    borderColor: '#EDF0F3',
+  },
+  statLabel: {
+    fontSize: 10,
     fontWeight: '700',
+    color: '#64748B',
   },
-  userLocationMarker: {
-    position: 'absolute',
-    bottom: 24,
-    left: 20,
+  statVal: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginVertical: 2,
+  },
+  statSub: {
+    fontSize: 9,
+    color: '#94A3B8',
+    textAlign: 'center',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 10,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 3,
+  },
+  detailLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  detailVal: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  gpsActionBtn: {
+    backgroundColor: '#0066FF',
+    borderRadius: 12,
+    paddingVertical: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(31, 41, 55, 0.85)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: THEME.colors.signal,
+    justifyContent: 'center',
+    marginVertical: 10,
   },
-  userLocationPulse: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: THEME.colors.signal,
+  btnDisabled: {
+    opacity: 0.6,
+  },
+  gpsActionIcon: {
+    fontSize: 16,
     marginRight: 6,
   },
-  userLocationText: {
-    fontSize: 10,
+  gpsActionText: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: '800',
-    color: THEME.colors.textPrimary,
+    letterSpacing: 0.3,
   },
-  mapPin: {
-    position: 'absolute',
+  facilityCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#EDF0F3',
+    marginVertical: 8,
+  },
+  facilityItem: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#EDF0F3',
+  },
+  facilityItemHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(19, 27, 46, 0.9)',
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 4,
-    borderWidth: 1,
-  },
-  pinShelterA: {
-    top: 36,
-    right: 16,
-    borderColor: THEME.colors.signal,
-  },
-  pinHighGround: {
-    top: 96,
-    left: 16,
-    borderColor: THEME.colors.success,
-  },
-  pinIcon: {
-    fontSize: 12,
-    marginRight: 4,
-  },
-  pinLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: THEME.colors.textPrimary,
-  },
-  canvasNotice: {
-    backgroundColor: 'rgba(9, 13, 22, 0.92)',
-    padding: THEME.spacing.md,
-    borderRadius: THEME.borderRadius.md,
-    borderWidth: 1,
-    borderColor: THEME.colors.warningBorder,
-    alignItems: 'center',
-    maxWidth: 290,
-  },
-  canvasNoticeTitle: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: THEME.colors.warning,
-    letterSpacing: 1,
-    marginBottom: 4,
-  },
-  canvasNoticeSubtitle: {
-    fontSize: 11,
-    color: THEME.colors.textPrimary,
-    textAlign: 'center',
-    fontWeight: '700',
-    lineHeight: 16,
-  },
-  canvasNoticeSub: {
-    fontSize: 10,
-    color: THEME.colors.textMuted,
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  shelterList: {
-    marginVertical: THEME.spacing.xs,
-  },
-  shelterCard: {
-    backgroundColor: THEME.colors.surface,
-    borderRadius: THEME.borderRadius.md,
-    padding: THEME.spacing.md,
-    borderWidth: 1,
-    borderColor: THEME.colors.surfaceBorder,
-    marginVertical: THEME.spacing.xs,
-  },
-  shelterHeader: {
-    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 6,
   },
-  shelterIcon: {
-    fontSize: 20,
-    marginRight: 10,
-  },
-  shelterTitleCol: {
-    flex: 1,
-  },
-  shelterName: {
-    ...THEME.typography.titleCard,
-    color: THEME.colors.textPrimary,
-  },
-  shelterType: {
-    ...THEME.typography.bodySmall,
-    color: THEME.colors.signal,
-    marginTop: 2,
-  },
-  capacityBadge: {
-    backgroundColor: THEME.colors.surfaceRaised,
+  facilityTypeBadge: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#D97706',
+    backgroundColor: '#FEF3C7',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
-    borderWidth: 1,
-    borderColor: THEME.colors.surfaceBorder,
+    letterSpacing: 0.4,
   },
-  badgeHighGround: {
-    borderColor: THEME.colors.success,
-  },
-  capacityText: {
-    fontSize: 9,
+  facilityDistance: {
+    fontSize: 13,
     fontWeight: '800',
-    color: THEME.colors.textPrimary,
+    color: '#0066FF',
   },
-  shelterMeta: {
+  facilityName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 2,
+  },
+  facilityAddress: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 4,
+  },
+  facilityMeta: {
     fontSize: 11,
-    color: THEME.colors.textMuted,
-    marginTop: 4,
+    color: '#059669',
+    fontWeight: '600',
+  },
+  waitingContainer: {
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  waitingIcon: {
+    fontSize: 24,
+    marginBottom: 6,
+  },
+  waitingNotice: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  errorBanner: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 8,
+    padding: 10,
+    marginVertical: 6,
+  },
+  errorBannerText: {
+    fontSize: 12,
+    color: '#DC2626',
+    fontWeight: '600',
+  },
+  attributionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#EDF0F3',
+    marginTop: 12,
+  },
+  attributionTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.6,
+    marginBottom: 4,
+  },
+  attributionText: {
+    fontSize: 11,
+    color: '#334155',
+    fontWeight: '600',
+    lineHeight: 16,
+    marginBottom: 4,
+  },
+  attributionSub: {
+    fontSize: 10,
+    color: '#94A3B8',
+    lineHeight: 14,
   },
 });

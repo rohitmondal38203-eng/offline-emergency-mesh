@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useState} from 'react';
-import {BackHandler, SafeAreaView, StatusBar, StyleSheet} from 'react-native';
+import {BackHandler, DeviceEventEmitter, SafeAreaView, StatusBar, StyleSheet, View} from 'react-native';
 import {THEME} from '../config/theme';
 import {NavigationProp, ScreenName} from './types';
 import {
@@ -10,7 +10,10 @@ import {
   RequestRescueScreen,
   SettingsScreen,
   SosFlashlightScreen,
+  SystemStatusScreen,
 } from '../screens';
+import {meshRouter} from '../services/mesh';
+import {BottomTabBar} from '../components';
 
 export const RootNavigator: React.FC = () => {
   const [screenStack, setScreenStack] = useState<ScreenName[]>(['HOME']);
@@ -56,6 +59,43 @@ export const RootNavigator: React.FC = () => {
     return () => backHandlerSubscription.remove();
   }, [canGoBack, goBack]);
 
+  // Handle ADB remote commands
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('RESQ_REMOTE_CMD', (event: {cmd: string; arg?: string}) => {
+      if (event.cmd === 'NAVIGATE' && event.arg) {
+        navigate(event.arg as ScreenName);
+      } else if (event.cmd === 'GO_BACK') {
+        goBack();
+      } else if (event.cmd === 'SEND_SOS') {
+        const emergencyType = (event.arg as any) || 'MEDICAL';
+        meshRouter.sendDistressBeacon({
+          emergencyType,
+          count: 1,
+          location: {
+            latitude: 22.458033,
+            longitude: 88.170005,
+            accuracy: 10,
+            timestamp: Date.now(),
+          },
+        }).catch(e => console.error('[RootNavigator] SEND_SOS failed', e));
+      } else if (event.cmd === 'SEND_HAZARD') {
+        meshRouter.sendHazardBroadcast({
+          hazardType: 'FLOOD',
+          severity: 'CRITICAL',
+          title: 'Flash Flood Alert',
+          message: event.arg || 'Water levels rising rapidly in sector 4',
+          location: {
+            latitude: 22.458033,
+            longitude: 88.170005,
+            accuracy: 10,
+            timestamp: Date.now(),
+          },
+        }).catch(e => console.error('[RootNavigator] SEND_HAZARD failed', e));
+      }
+    });
+    return () => sub.remove();
+  }, [navigate, goBack]);
+
   const navigation: NavigationProp = {
     currentScreen,
     navigate,
@@ -75,6 +115,8 @@ export const RootNavigator: React.FC = () => {
         return <HazardBroadcastScreen navigation={navigation} />;
       case 'SOS_FLASHLIGHT':
         return <SosFlashlightScreen navigation={navigation} />;
+      case 'SYSTEM_STATUS':
+        return <SystemStatusScreen navigation={navigation} />;
       case 'SETTINGS':
         return <SettingsScreen navigation={navigation} />;
       case 'HOME':
@@ -85,8 +127,11 @@ export const RootNavigator: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor={THEME.colors.background} />
-      {renderCurrentScreen()}
+      <StatusBar barStyle="dark-content" backgroundColor={THEME.colors.surface} />
+      <View style={styles.screenWrapper}>
+        {renderCurrentScreen()}
+      </View>
+      <BottomTabBar navigation={navigation} />
     </SafeAreaView>
   );
 };
@@ -96,4 +141,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: THEME.colors.background,
   },
+  screenWrapper: {
+    flex: 1,
+  },
 });
+

@@ -1,0 +1,26 @@
+DATASET ATTRIBUTION & OPEN LICENSE DISCLOSURE
+=====================================================
+District: South 24 Parganas, West Bengal, India
+
+1. OpenStreetMap (OSM)
+   Map data © OpenStreetMap contributors, available under the Open Database License (ODbL).
+   License: https://www.opendatacommons.org/licenses/odbl/
+   OSM data included:
+   - South 24 Parganas district & CD Block boundaries
+   - Major evacuation road corridors (NH-12, SH-1, connecting arteries)
+   - Tidal river estuaries (Hooghly, Matla, Raimangal, Muriganga, Saptamukhi, Thakuran)
+   - Delta coastlines & island contours
+   - Georeferenced public healthcare centers, police stations, and ferry relief ghats
+
+2. Department of Disaster Management & Civil Defence, Government of West Bengal
+   Office of the District Magistrate, South 24 Parganas / NCRMP Stage II
+   Multi-Purpose Cyclone Shelters (MPCS) and flood evacuation shelters.
+   Source: https://s24pgs.gov.in/
+
+3. Department of Health & Family Welfare, Government of West Bengal
+   Government Medical Colleges, Sub-Divisional Hospitals, and BPHCs.
+   Source: https://www.wbhealth.gov.in/
+
+REQUIRED APPLICATION ATTRIBUTION PLACEMENT:
+- Interactive Map View: A permanent watermark or credit link ("© OpenStreetMap contributors") in the map footer.
+- Settings / Legal Screen: Full attribution disclosure text and license links.

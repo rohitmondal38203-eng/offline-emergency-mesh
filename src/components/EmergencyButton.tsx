@@ -8,7 +8,7 @@ import {
 } from 'react-native';
 import {THEME} from '../config/theme';
 
-export type ButtonVariant = 'emergency' | 'primary' | 'secondary' | 'warning' | 'disabled';
+export type ButtonVariant = 'emergency' | 'primary' | 'secondary' | 'warning' | 'disabled' | 'outline';
 
 interface EmergencyButtonProps extends TouchableOpacityProps {
   title: string;
@@ -45,6 +45,11 @@ export const EmergencyButton: React.FC<EmergencyButtonProps> = ({
           container: styles.secondaryContainer,
           text: styles.secondaryText,
         };
+      case 'outline':
+        return {
+          container: styles.outlineContainer,
+          text: styles.outlineText,
+        };
       case 'disabled':
         return {
           container: styles.disabledContainer,
@@ -63,7 +68,7 @@ export const EmergencyButton: React.FC<EmergencyButtonProps> = ({
 
   return (
     <TouchableOpacity
-      activeOpacity={isActuallyDisabled ? 1 : 0.75}
+      activeOpacity={isActuallyDisabled ? 1 : 0.8}
       disabled={isActuallyDisabled}
       onPress={onPress}
       accessibilityRole="button"
@@ -89,6 +94,7 @@ export const EmergencyButton: React.FC<EmergencyButtonProps> = ({
           <Text
             style={[
               styles.subtitleText,
+              variant === 'secondary' && styles.secondarySubtitleText,
               isActuallyDisabled && styles.disabledSubtitleText,
             ]}>
             {subtitle}
@@ -101,13 +107,13 @@ export const EmergencyButton: React.FC<EmergencyButtonProps> = ({
 
 const styles = StyleSheet.create({
   baseContainer: {
-    minHeight: THEME.touchTarget.minHeight,
-    borderRadius: THEME.borderRadius.md,
-    paddingVertical: THEME.spacing.md,
-    paddingHorizontal: THEME.spacing.lg,
+    minHeight: 48,
+    borderRadius: 24,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: THEME.spacing.xs,
+    marginVertical: 6,
   },
   contentWrapper: {
     alignItems: 'center',
@@ -115,77 +121,95 @@ const styles = StyleSheet.create({
   },
   baseText: {
     fontSize: 15,
-    fontWeight: '800',
-    letterSpacing: 0.8,
+    fontWeight: '700',
+    letterSpacing: 0.3,
     textAlign: 'center',
   },
   subtitleText: {
     fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.75)',
+    color: 'rgba(255, 255, 255, 0.8)',
     marginTop: 2,
     textAlign: 'center',
   },
+  secondarySubtitleText: {
+    color: '#64748B',
+  },
 
-  // Emergency (Crimson SOS)
-  emergencyContainer: {
-    backgroundColor: THEME.colors.emergency,
-    borderWidth: 2,
-    borderColor: THEME.colors.emergencyBorder,
-    shadowColor: THEME.colors.emergency,
+  // Primary (Modern Blue Action - matching reference "Send Request" / "Turn ON")
+  primaryContainer: {
+    backgroundColor: '#0066FF',
+    shadowColor: '#0066FF',
     shadowOffset: {width: 0, height: 4},
-    shadowOpacity: 0.35,
+    shadowOpacity: 0.22,
     shadowRadius: 8,
+    elevation: 3,
+  },
+  primaryText: {
+    color: '#FFFFFF',
+  },
+
+  // Emergency (Safety Red - matching reference SOS)
+  emergencyContainer: {
+    backgroundColor: '#EF4444',
+    shadowColor: '#EF4444',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
     elevation: 4,
   },
   emergencyText: {
-    color: '#ffffff',
-    fontSize: 17,
-    fontWeight: '900',
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
   },
 
-  // Primary (Signal Blue)
-  primaryContainer: {
-    backgroundColor: THEME.colors.signalDark,
+  // Secondary (Light Blue pill - matching reference "Stop Scan")
+  secondaryContainer: {
+    backgroundColor: '#EFF6FF',
     borderWidth: 1,
-    borderColor: THEME.colors.signal,
+    borderColor: '#DBEAFE',
   },
-  primaryText: {
-    color: '#ffffff',
+  secondaryText: {
+    color: '#0066FF',
+  },
+
+  // Outline
+  outlineContainer: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+  },
+  outlineText: {
+    color: '#0F172A',
   },
 
   // Warning (Amber)
   warningContainer: {
-    backgroundColor: THEME.colors.warning,
-    borderWidth: 1,
-    borderColor: THEME.colors.warningBorder,
+    backgroundColor: '#F59E0B',
+    shadowColor: '#F59E0B',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 2,
   },
   warningText: {
-    color: '#090d16',
+    color: '#FFFFFF',
     fontWeight: '800',
-  },
-
-  // Secondary (Dark surface with border)
-  secondaryContainer: {
-    backgroundColor: THEME.colors.surfaceRaised,
-    borderWidth: 1,
-    borderColor: THEME.colors.surfaceBorder,
-  },
-  secondaryText: {
-    color: THEME.colors.textPrimary,
   },
 
   // Disabled
   disabledContainer: {
-    backgroundColor: THEME.colors.disabledBg,
+    backgroundColor: '#F1F5F9',
     borderWidth: 1,
-    borderColor: THEME.colors.disabledBorder,
+    borderColor: '#E2E8F0',
     elevation: 0,
     shadowOpacity: 0,
   },
   disabledText: {
-    color: THEME.colors.disabledText,
+    color: '#94A3B8',
   },
   disabledSubtitleText: {
-    color: THEME.colors.textMuted,
+    color: '#CBD5E1',
   },
 });
+

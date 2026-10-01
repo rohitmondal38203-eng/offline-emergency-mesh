@@ -14,7 +14,10 @@ import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Build
@@ -46,6 +49,41 @@ class ResqBleAdvertiserModule(private val reactContext: ReactApplicationContext)
     private var gattServer: BluetoothGattServer? = null
     private var isGattServerActive = false
 
+    private val commandReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val action = intent?.action ?: return
+            if (action == "com.disastermesh.CMD") {
+                val cmd = intent.getStringExtra("cmd") ?: return
+                val arg = intent.getStringExtra("arg") ?: ""
+                val params = Arguments.createMap().apply {
+                    putString("cmd", cmd)
+                    putString("arg", arg)
+                }
+                reactContext
+                    .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    ?.emit("RESQ_REMOTE_CMD", params)
+            }
+        }
+    }
+
+    init {
+        try {
+            val filter = IntentFilter("com.disastermesh.CMD")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                reactContext.registerReceiver(commandReceiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                reactContext.registerReceiver(commandReceiver, filter)
+            }
+        } catch (_: Exception) {}
+    }
+
+    override fun onCatalystInstanceDestroy() {
+        super.onCatalystInstanceDestroy()
+        try {
+            reactContext.unregisterReceiver(commandReceiver)
+        } catch (_: Exception) {}
+    }
+
     override fun getName(): String = "ResqBleAdvertiser"
 
     private fun getBluetoothAdapter(): BluetoothAdapter? {
@@ -67,6 +105,13 @@ class ResqBleAdvertiserModule(private val reactContext: ReactApplicationContext)
                 peerId = "RESQ-MESH:$hexTag"
                 prefs.edit().putString(KEY_PEER_ID, peerId).apply()
             }
+            try {
+                val adapter = getBluetoothAdapter()
+                if (adapter != null && (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                    ContextCompat.checkSelfPermission(reactContext, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED)) {
+                    adapter.name = peerId
+                }
+            } catch (_: Exception) {}
             promise.resolve(peerId)
         } catch (e: Exception) {
             promise.reject("IDENTITY_ERROR", e.localizedMessage, e)
@@ -157,6 +202,12 @@ class ResqBleAdvertiserModule(private val reactContext: ReactApplicationContext)
                 } catch (_: Exception) {}
             }
 
+            // Ensure the GATT server is active so incoming peers can transfer mesh packets
+            val charUuidStr = "0000fd09-0000-1000-8000-00805f9b34fb"
+            try {
+                internalStartGattServer(serviceUuidStr, charUuidStr)
+            } catch (_: Exception) {}
+
             val pUuid = ParcelUuid.fromString(serviceUuidStr)
 
             // Primary packet: service UUID (compact to prevent ADVERTISE_FAILED_DATA_TOO_LARGE)
@@ -234,111 +285,187 @@ class ResqBleAdvertiserModule(private val reactContext: ReactApplicationContext)
     // PHASE 4: GATT SERVER & MESH DATA RECEPTION
     // ==========================================
 
-    @ReactMethod
-    fun startGattServer(serviceUuidStr: String, charUuidStr: String, promise: Promise) {
-        try {
-            if (isGattServerActive && gattServer != null) {
-                promise.resolve(true)
-                return
-            }
+    private fun internalStartGattServer(serviceUuidStr: String, charUuidStr: String): Boolean {
+        if (isGattServerActive && gattServer != null) {
+            return true
+        }
 
-            val manager = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            if (manager == null) {
-                promise.reject("NO_BLUETOOTH", "BluetoothManager not available")
-                return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val connGranted = ContextCompat.checkSelfPermission(
+                reactContext,
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!connGranted) {
+                android.util.Log.w("GattServer", "[GattServer] BLUETOOTH_CONNECT permission missing")
+                return false
             }
+        }
 
-            val callback = object : BluetoothGattServerCallback() {
-                override fun onCharacteristicWriteRequest(
-                    device: BluetoothDevice,
-                    requestId: Int,
-                    characteristic: BluetoothGattCharacteristic,
-                    preparedWrite: Boolean,
-                    responseNeeded: Boolean,
-                    offset: Int,
-                    value: ByteArray?
-                ) {
-                    super.onCharacteristicWriteRequest(
+        val manager = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            ?: return false
+
+        val callback = object : BluetoothGattServerCallback() {
+            override fun onCharacteristicReadRequest(
+                device: BluetoothDevice,
+                requestId: Int,
+                offset: Int,
+                characteristic: BluetoothGattCharacteristic
+            ) {
+                super.onCharacteristicReadRequest(device, requestId, offset, characteristic)
+                android.util.Log.d("GattServer", "[GattServer] incoming read from ${device.address}")
+                try {
+                    val pingResponse = "RESQ_PING_ACK".toByteArray(Charsets.UTF_8)
+                    val value = if (offset < pingResponse.size) {
+                        pingResponse.copyOfRange(offset, pingResponse.size)
+                    } else {
+                        ByteArray(0)
+                    }
+                    gattServer?.sendResponse(
                         device,
                         requestId,
-                        characteristic,
-                        preparedWrite,
-                        responseNeeded,
+                        BluetoothGatt.GATT_SUCCESS,
                         offset,
                         value
                     )
+                } catch (e: Exception) {
+                    android.util.Log.w("GattServer", "[GattServer] sendResponse error on read: ${e.message}")
+                }
+            }
 
-                    // Acknowledge GATT write if requested by client
-                    if (responseNeeded) {
-                        try {
-                            gattServer?.sendResponse(
-                                device,
-                                requestId,
-                                BluetoothGatt.GATT_SUCCESS,
-                                offset,
-                                value
-                            )
-                        } catch (_: Exception) {}
-                    }
+            override fun onCharacteristicWriteRequest(
+                device: BluetoothDevice,
+                requestId: Int,
+                characteristic: BluetoothGattCharacteristic,
+                preparedWrite: Boolean,
+                responseNeeded: Boolean,
+                offset: Int,
+                value: ByteArray?
+            ) {
+                super.onCharacteristicWriteRequest(
+                    device,
+                    requestId,
+                    characteristic,
+                    preparedWrite,
+                    responseNeeded,
+                    offset,
+                    value
+                )
 
-                    // Forward incoming data payload to React Native layer
-                    if (value != null && value.isNotEmpty()) {
-                        val base64Data = Base64.encodeToString(value, Base64.NO_WRAP)
-                        val params = Arguments.createMap().apply {
-                            putString("senderAddress", device.address)
-                            putString("data", base64Data)
-                            putString("characteristicUuid", characteristic.uuid.toString())
-                        }
-                        reactContext
-                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                            ?.emit("onMeshGattPacketReceived", params)
+                android.util.Log.d("GattServer", "[BLE-RX] incoming write from ${device.address}, len=${value?.size ?: 0}")
+
+                // Acknowledge GATT write if requested by client
+                if (responseNeeded) {
+                    try {
+                        gattServer?.sendResponse(
+                            device,
+                            requestId,
+                            BluetoothGatt.GATT_SUCCESS,
+                            offset,
+                            value
+                        )
+                    } catch (e: Exception) {
+                        android.util.Log.w("GattServer", "[GattServer] sendResponse error: ${e.message}")
                     }
                 }
 
-                override fun onConnectionStateChange(
-                    device: BluetoothDevice,
-                    status: Int,
-                    newState: Int
-                ) {
-                    super.onConnectionStateChange(device, status, newState)
+                // Forward incoming data payload to React Native layer
+                if (value != null && value.isNotEmpty()) {
+                    val base64Data = Base64.encodeToString(value, Base64.NO_WRAP)
+                    android.util.Log.d("GattServer", "[BLE-RX] emit onMeshGattPacketReceived device=${device.address} rawLen=${value.size} b64Len=${base64Data.length}")
                     val params = Arguments.createMap().apply {
-                        putString("deviceAddress", device.address)
-                        putBoolean("connected", newState == BluetoothProfile.STATE_CONNECTED)
+                        putString("senderAddress", device.address)
+                        putString("data", base64Data)
+                        putString("characteristicUuid", characteristic.uuid.toString())
                     }
                     reactContext
                         .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                        ?.emit("onMeshGattConnectionChange", params)
+                        ?.emit("onMeshGattPacketReceived", params)
+                } else {
+                    android.util.Log.w("GattServer", "[GattServer] incoming write with empty/null value from ${device.address}")
                 }
             }
 
-            gattServer = manager.openGattServer(reactContext, callback)
-            if (gattServer == null) {
-                promise.reject("GATT_ERROR", "Failed to open BluetoothGattServer")
-                return
+            override fun onConnectionStateChange(
+                device: BluetoothDevice,
+                status: Int,
+                newState: Int
+            ) {
+                super.onConnectionStateChange(device, status, newState)
+                android.util.Log.d("GattServer", "[GattServer] peer connection change: ${device.address}, status=$status, state=$newState")
+                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    android.util.Log.d("GattServer", "[BLE] CONNECT_SUCCESS device=${device.address}")
+                    try {
+                        gattServer?.connect(device, false)
+                        android.util.Log.d("GattServer", "[GattServer] claimed/bound server connection to ${device.address}")
+                    } catch (e: Exception) {
+                        android.util.Log.w("GattServer", "[GattServer] failed to bind server connection: ${e.message}")
+                    }
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    android.util.Log.d("GattServer", "[BLE] DISCONNECT device=${device.address}")
+                    android.util.Log.d("GattServer", "[BLE] DISCONNECT_REASON: status=$status")
+                    try {
+                        gattServer?.cancelConnection(device)
+                        android.util.Log.d("GattServer", "[GattServer] cleaned up server connection to ${device.address}")
+                    } catch (e: Exception) {
+                        android.util.Log.w("GattServer", "[GattServer] failed to clean up server connection: ${e.message}")
+                    }
+                }
+
+                val devName = try {
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                        ContextCompat.checkSelfPermission(reactContext, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                        device.name
+                    } else null
+                } catch (_: Exception) { null }
+
+                val params = Arguments.createMap().apply {
+                    putString("deviceAddress", device.address)
+                    putString("deviceName", devName ?: "")
+                    putBoolean("connected", newState == BluetoothProfile.STATE_CONNECTED)
+                }
+                reactContext
+                    .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    ?.emit("onMeshGattConnectionChange", params)
             }
+        }
 
-            val serviceUuid = UUID.fromString(serviceUuidStr)
-            val charUuid = UUID.fromString(charUuidStr)
+        val server = manager.openGattServer(reactContext, callback) ?: return false
+        gattServer = server
 
-            val service = BluetoothGattService(
-                serviceUuid,
-                BluetoothGattService.SERVICE_TYPE_PRIMARY
-            )
+        val serviceUuid = UUID.fromString(serviceUuidStr)
+        val charUuid = UUID.fromString(charUuidStr)
 
-            val characteristic = BluetoothGattCharacteristic(
-                charUuid,
-                BluetoothGattCharacteristic.PROPERTY_WRITE or
-                    BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE or
-                    BluetoothGattCharacteristic.PROPERTY_READ,
-                BluetoothGattCharacteristic.PERMISSION_WRITE or
-                    BluetoothGattCharacteristic.PERMISSION_READ
-            )
+        val service = BluetoothGattService(
+            serviceUuid,
+            BluetoothGattService.SERVICE_TYPE_PRIMARY
+        )
 
-            service.addCharacteristic(characteristic)
-            gattServer?.addService(service)
+        val characteristic = BluetoothGattCharacteristic(
+            charUuid,
+            BluetoothGattCharacteristic.PROPERTY_WRITE or
+                BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE or
+                BluetoothGattCharacteristic.PROPERTY_READ,
+            BluetoothGattCharacteristic.PERMISSION_WRITE or
+                BluetoothGattCharacteristic.PERMISSION_READ
+        )
 
-            isGattServerActive = true
-            promise.resolve(true)
+        service.addCharacteristic(characteristic)
+        server.addService(service)
+
+        isGattServerActive = true
+        android.util.Log.d("GattServer", "[GattServer] START service=$serviceUuidStr")
+        return true
+    }
+
+    @ReactMethod
+    fun startGattServer(serviceUuidStr: String, charUuidStr: String, promise: Promise) {
+        try {
+            val ok = internalStartGattServer(serviceUuidStr, charUuidStr)
+            if (ok) {
+                promise.resolve(true)
+            } else {
+                promise.reject("GATT_ERROR", "Failed to start BluetoothGattServer (check Bluetooth & permissions)")
+            }
         } catch (e: Exception) {
             isGattServerActive = false
             promise.reject("GATT_SERVER_ERROR", e.localizedMessage, e)
@@ -348,6 +475,7 @@ class ResqBleAdvertiserModule(private val reactContext: ReactApplicationContext)
     @ReactMethod
     fun stopGattServer(promise: Promise) {
         try {
+            android.util.Log.d("GattServer", "[GattServer] STOP")
             if (gattServer != null) {
                 gattServer?.close()
                 gattServer = null
@@ -362,6 +490,23 @@ class ResqBleAdvertiserModule(private val reactContext: ReactApplicationContext)
     @ReactMethod
     fun isGattServerRunning(promise: Promise) {
         promise.resolve(isGattServerActive)
+    }
+
+    @ReactMethod
+    fun disconnectDevice(deviceAddress: String, promise: Promise) {
+        try {
+            val adapter = getBluetoothAdapter()
+            if (adapter != null && gattServer != null) {
+                val device = adapter.getRemoteDevice(deviceAddress)
+                if (device != null) {
+                    gattServer?.cancelConnection(device)
+                    android.util.Log.d("GattServer", "[GattServer] cancelled server connection to $deviceAddress")
+                }
+            }
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.resolve(false)
+        }
     }
 
     // ==========================================

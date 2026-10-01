@@ -20,26 +20,17 @@ export const StatusCard: React.FC<StatusCardProps> = ({
   items,
   variant = 'default',
 }) => {
-  const getBorderColor = () => {
-    switch (variant) {
-      case 'emergency':
-        return THEME.colors.emergency;
-      case 'warning':
-        return THEME.colors.warning;
-      case 'info':
-        return THEME.colors.signal;
-      case 'default':
-      default:
-        return THEME.colors.surfaceBorder;
-    }
-  };
-
   return (
-    <View style={[styles.card, {borderColor: getBorderColor()}]}>
+    <View style={styles.card}>
       {title ? <Text style={styles.cardTitle}>{title}</Text> : null}
       <View style={styles.itemsWrapper}>
         {items.map((item, idx) => (
-          <View key={idx} style={styles.row}>
+          <View
+            key={idx}
+            style={[
+              styles.row,
+              idx < items.length - 1 && styles.rowDivider,
+            ]}>
             <Text style={styles.label}>{item.label}</Text>
             <View style={styles.valueRow}>
               <Text
@@ -64,17 +55,26 @@ export const StatusCard: React.FC<StatusCardProps> = ({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: THEME.colors.surface,
-    borderRadius: THEME.borderRadius.md,
-    padding: THEME.spacing.md,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderWidth: 1,
-    marginVertical: THEME.spacing.xs,
+    borderColor: '#EDF0F3',
+    marginVertical: 6,
+    shadowColor: '#0F172A',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
   },
   cardTitle: {
-    ...THEME.typography.caption,
-    color: THEME.colors.signal,
-    marginBottom: THEME.spacing.sm,
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0066FF',
+    marginBottom: 8,
     textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   itemsWrapper: {
     flexDirection: 'column',
@@ -83,11 +83,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: THEME.spacing.xs,
+    paddingVertical: 8,
+  },
+  rowDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#F8FAFC',
   },
   label: {
     fontSize: 13,
-    color: THEME.colors.textSecondary,
+    color: '#64748B',
     fontWeight: '500',
   },
   valueRow: {
@@ -96,21 +100,20 @@ const styles = StyleSheet.create({
   },
   value: {
     fontSize: 13,
-    color: THEME.colors.textPrimary,
+    color: '#0F172A',
     fontWeight: '700',
   },
   badge: {
-    backgroundColor: THEME.colors.surfaceRaised,
+    backgroundColor: '#EFF6FF',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
     marginLeft: 6,
-    borderWidth: 1,
-    borderColor: THEME.colors.surfaceBorder,
   },
   badgeText: {
     fontSize: 10,
     fontWeight: '700',
-    color: THEME.colors.textMuted,
+    color: '#0066FF',
   },
 });
+

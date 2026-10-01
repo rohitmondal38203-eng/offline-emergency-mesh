@@ -2,6 +2,8 @@ import React, {useCallback, useEffect, useState} from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
+  DeviceEventEmitter,
   ScrollView,
   StyleSheet,
   Text,
@@ -27,8 +29,11 @@ import {
   PeerIdentityService,
 } from '../services/ble';
 import {
+  DistressBeaconPayload,
+  MeshMessage,
   meshRouter,
   meshStore,
+  meshTransport,
   MeshTelemetry,
   StoredMeshMessage,
   MessageDeliveryStatus,
@@ -43,11 +48,11 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
 }) => {
   const [radioState, setRadioState] = useState<BleRadioState>('UNKNOWN');
   const [permissionStatus, setPermissionStatus] = useState<BlePermissionStatus>('CHECKING');
-  const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [isScanning, setIsScanning] = useState<boolean>(() => bleService.getIsScanning());
   const [isAdvertising, setIsAdvertising] = useState<boolean>(false);
   const [advertisingSupported, setAdvertisingSupported] = useState<boolean>(true);
   const [localPeerId, setLocalPeerId] = useState<string>('RESQ-MESH:----');
-  const [discoveredPeers, setDiscoveredPeers] = useState<BlePeer[]>([]);
+  const [discoveredPeers, setDiscoveredPeers] = useState<BlePeer[]>(() => bleService.getDiscoveredPeers());
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Phase 4 Mesh State
@@ -56,9 +61,24 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
   );
   const [recentMessages, setRecentMessages] = useState<StoredMeshMessage[]>([]);
 
+  // Open received GPS coordinates in Google Maps
+  const handleOpenGoogleMaps = useCallback(async (latitude: number, longitude: number) => {
+    const url = `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+    try {
+      await Linking.openURL(url);
+    } catch (err: any) {
+      console.warn('[NearbyDevicesScreen] Failed to open Google Maps URL:', err);
+      Alert.alert(
+        'Unable to Open Maps',
+        'Could not open Google Maps on this device. Please verify that Google Maps or a web browser is installed.'
+      );
+    }
+  }, []);
+
   // Initialize BLE service, mesh router, identity, and permissions
   useEffect(() => {
     let isMounted = true;
+    console.log(`[NearbyDevicesScreen] MOUNT: cachedPeers=${bleService.getDiscoveredPeers().length} activeConnections=${bleService.getConnectedPeerIds().join(',') || 'none'}`);
 
     async function setupBleAndMesh() {
       // 1. Load stable peer identity
@@ -67,10 +87,14 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
         setLocalPeerId(peerId);
       }
 
-      // 2. Check advertising support
+      // 2. Check advertising support and restore native beacon state
       const advSupport = await BleAdvertiser.isSupported();
       if (isMounted) {
         setAdvertisingSupported(advSupport);
+      }
+      const currentlyAdvertising = await BleAdvertiser.isAdvertising();
+      if (isMounted) {
+        setIsAdvertising(currentlyAdvertising);
       }
 
       // 3. Check initial runtime permissions
@@ -104,18 +128,62 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
 
       meshRouter.setOnTelemetryUpdated((telem: MeshTelemetry) => {
         if (isMounted) {
+          console.log(`[NearbyDevicesScreen] UI telemetry updated: total=${telem.totalMessages} pending=${telem.pendingCount} forwarded=${telem.forwardedCount} delivered=${telem.deliveredCount} lastReceived=${telem.lastReceivedMessage?.messageId || 'none'}`);
           setMeshTelemetry(telem);
           setRecentMessages(meshStore.getAllMessages());
         }
       });
 
-      // 6. Register BLE service callbacks
+      // Register incoming message listener for real-time alerts
+      meshRouter.setOnMessageReceived((msg: MeshMessage) => {
+        if (!isMounted) return;
+        console.log(`[NearbyDevicesScreen] UI received packet update: messageId=${msg.messageId} type=${msg.messageType}`);
+        if (msg.messageType === 'DISTRESS_BEACON') {
+          const payload = typeof msg.payload === 'object' && msg.payload !== null
+            ? (msg.payload as DistressBeaconPayload)
+            : null;
+
+          console.log(`[NearbyDevicesScreen] UI showing Alert.alert for DISTRESS_BEACON: type=${payload?.emergencyType} people=${payload?.count} notes=${payload?.notes} hasLocation=${Boolean(payload?.location)}`);
+
+          const locText = payload?.location
+            ? `📍 Location\nLatitude: ${typeof payload.location.latitude === 'number' ? payload.location.latitude.toFixed(6) : payload.location.latitude}\nLongitude: ${typeof payload.location.longitude === 'number' ? payload.location.longitude.toFixed(6) : payload.location.longitude}\nAccuracy: ±${payload.location.accuracy}m`
+            : '📍 Location unavailable';
+
+          const alertButtons: any[] = [{text: 'OK', style: 'cancel'}];
+          if (
+            payload?.location &&
+            typeof payload.location.latitude === 'number' &&
+            typeof payload.location.longitude === 'number'
+          ) {
+            const lat = payload.location.latitude;
+            const lon = payload.location.longitude;
+            alertButtons.unshift({
+              text: 'Open in Google Maps',
+              onPress: () => handleOpenGoogleMaps(lat, lon),
+            });
+          }
+
+          Alert.alert(
+            '🚨 REQUEST RESCUE',
+            `Emergency Type: ${payload?.emergencyType || 'EMERGENCY'}\nPeople: ${payload?.count ?? 1}${payload?.notes ? `\nNotes: ${payload.notes}` : ''}\n\n${locText}`,
+            alertButtons
+          );
+        }
+      });
+
+      let lastPeerForwardTrigger = 0;
+
+      // 6. Register BLE service callbacks (immediately receives current peers & scan state)
       bleService.setListeners({
         onPeersUpdated: (peers: BlePeer[]) => {
           if (isMounted) {
             setDiscoveredPeers(peers);
-            // Opportunistically trigger store-and-forward relay when peers appear
-            meshRouter.attemptForwardPending().catch(() => {});
+            // Opportunistically trigger store-and-forward relay, throttled to at most once every 5 seconds
+            const now = Date.now();
+            if (now - lastPeerForwardTrigger > 5000) {
+              lastPeerForwardTrigger = now;
+              meshRouter.attemptForwardPending().catch(() => {});
+            }
           }
         },
         onScanStatusChanged: (scanning: boolean) => {
@@ -133,10 +201,31 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
 
     setupBleAndMesh();
 
-    return () => {
-      isMounted = false;
-      bleService.stopScanning();
-    };
+      const remoteCmdSub = DeviceEventEmitter.addListener(
+        'RESQ_REMOTE_CMD',
+        async (event: {cmd: string; arg?: string}) => {
+          console.log(`[NearbyDevicesScreen] Remote command received: ${event.cmd} arg=${event.arg}`);
+          if (event.cmd === 'START_SCAN') {
+            await handleStartScan();
+          } else if (event.cmd === 'STOP_SCAN') {
+            handleStopScan();
+          } else if (event.cmd === 'CONNECT' && event.arg) {
+            await handleConnectPeer(event.arg);
+          } else if (event.cmd === 'DISCONNECT' && event.arg) {
+            await handleDisconnectPeer(event.arg);
+          } else if (event.cmd === 'SEND_TEST') {
+            await handleSendTestMessage();
+          }
+        }
+      );
+
+      return () => {
+        isMounted = false;
+        console.log(`[NearbyDevicesScreen] UNMOUNT: activeConnections=${bleService.getConnectedPeerIds().join(',') || 'none'}`);
+        // Detach listeners without killing active connections or background scan
+        bleService.removeListeners();
+        remoteCmdSub.remove();
+      };
   }, []);
 
   // Request permissions if not granted
@@ -146,6 +235,9 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
     setPermissionStatus(result.status);
     if (!result.canScan) {
       setErrorMessage(result.message);
+    } else {
+      // Ensure GATT Server is activated once permissions are granted
+      meshTransport.ensureGattServer().catch(() => {});
     }
   };
 
@@ -173,12 +265,12 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
       return;
     }
 
-    await bleService.startScanning();
+    await bleService.startScanning('NearbyDevicesScreen.handleStartScan');
   };
 
   // Stop BLE scanning
   const handleStopScan = () => {
-    bleService.stopScanning();
+    bleService.stopScanning('NearbyDevicesScreen.handleStopScan');
   };
 
   // Toggle BLE peripheral advertising
@@ -186,6 +278,7 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
     setErrorMessage(null);
 
     if (isAdvertising) {
+      console.log('[BLE] BEACON_STOP caller=NearbyDevicesScreen.handleToggleAdvertising');
       await BleAdvertiser.stopAdvertising();
       setIsAdvertising(false);
       return;
@@ -201,6 +294,9 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
     }
 
     try {
+      // Ensure GATT Server is ready to receive data before beaconing
+      await meshTransport.ensureGattServer();
+      console.log(`[BLE] BEACON_START caller=NearbyDevicesScreen.handleToggleAdvertising peerId=${localPeerId}`);
       await BleAdvertiser.startAdvertising(localPeerId);
       setIsAdvertising(true);
     } catch (e: any) {
@@ -212,11 +308,16 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
   // Connect to a peer
   const handleConnectPeer = useCallback(async (peerId: string) => {
     setErrorMessage(null);
-    await bleService.connectToPeer(peerId);
+    const connected = await bleService.connectToPeer(peerId);
+    if (connected) {
+      // Trigger opportunistic forwarding over newly active link
+      meshRouter.attemptForwardPending().catch(() => {});
+    }
   }, []);
 
   // Disconnect from a peer
   const handleDisconnectPeer = useCallback(async (peerId: string) => {
+    console.log(`[BLE] CANCEL_CONNECTION device=${peerId} caller=NearbyDevicesScreen.handleDisconnectPeer`);
     await bleService.disconnectFromPeer(peerId);
   }, []);
 
@@ -299,28 +400,65 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
           </View>
         )}
 
-        {/* Local Node Identity Card */}
+        {/* Local Node Identity & Beacon Status Card */}
         <View style={styles.nodeIdentityCard}>
-          <View style={styles.nodeIdentityRow}>
-            <View>
+          <View style={styles.nodeIdentityTop}>
+            <View style={styles.nodeIdentityLeft}>
               <Text style={styles.nodeIdentityLabel}>THIS DEVICE IDENTITY</Text>
               <Text style={styles.nodeIdentityVal}>{localPeerId}</Text>
+            </View>
+
+            {/* Clear, unmistakable beacon status badge */}
+            <View
+              style={[
+                styles.beaconBadge,
+                isAdvertising ? styles.beaconBadgeActive : styles.beaconBadgeOff,
+              ]}>
+              <View
+                style={[
+                  styles.beaconDot,
+                  isAdvertising ? styles.beaconDotActive : styles.beaconDotOff,
+                ]}
+              />
+              <Text
+                style={[
+                  styles.beaconBadgeText,
+                  isAdvertising ? styles.beaconTextActive : styles.beaconTextOff,
+                ]}>
+                {isAdvertising ? 'Beacon: ACTIVE' : 'Beacon: OFF'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.nodeIdentityDivider} />
+
+          <View style={styles.nodeIdentityActionRow}>
+            <View style={styles.nodeIdentityActionLeft}>
+              <Text style={styles.nodeIdentityActionTitle}>BLE BEACON</Text>
+              <Text style={styles.nodeIdentityHint}>
+                {isAdvertising
+                  ? 'Broadcasting node presence so nearby rescue devices can discover you.'
+                  : 'Beacon is currently stopped. Tap button to broadcast your node presence.'}
+              </Text>
             </View>
             <TouchableOpacity
               activeOpacity={0.7}
               onPress={handleToggleAdvertising}
               style={[
                 styles.advToggleBtn,
-                isAdvertising && styles.advToggleBtnActive,
+                isAdvertising ? styles.advToggleBtnStop : styles.advToggleBtnStart,
               ]}>
-              <Text style={styles.advToggleBtnText}>
-                {isAdvertising ? '■ STOP BEACON' : '▲ ADVERTISE BEACON'}
+              <Text
+                style={[
+                  styles.advToggleBtnText,
+                  isAdvertising
+                    ? styles.advToggleBtnTextStop
+                    : styles.advToggleBtnTextStart,
+                ]}>
+                {isAdvertising ? '■ STOP BEACON' : '▲ START BEACON'}
               </Text>
             </TouchableOpacity>
           </View>
-          <Text style={styles.nodeIdentityHint}>
-            Non-emergency BLE presence beacon broadcasts your node ID so other phones running RESQ-MESH can discover you.
-          </Text>
         </View>
 
         {/* Radio & Telemetry Status Card */}
@@ -347,7 +485,7 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
             },
             {
               label: 'Scanning',
-              value: isScanning ? 'ACTIVE (SEARCHING)' : 'IDLE',
+              value: isScanning ? 'ACTIVE' : 'IDLE',
               color: isScanning ? THEME.colors.signal : THEME.colors.textMuted,
             },
             {
@@ -355,8 +493,8 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
               value: !advertisingSupported
                 ? 'Hardware Unsupported'
                 : isAdvertising
-                ? 'BROADCASTING'
-                : 'Disabled',
+                ? 'Beacon: ACTIVE'
+                : 'Beacon: OFF',
               color: isAdvertising ? THEME.colors.success : THEME.colors.textMuted,
             },
           ]}
@@ -526,11 +664,68 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
                 ID: {meshTelemetry.lastReceivedMessage.messageId}
               </Text>
               <View style={styles.payloadBox}>
-                <Text style={styles.payloadText}>
-                  {typeof meshTelemetry.lastReceivedMessage.payload === 'string'
-                    ? meshTelemetry.lastReceivedMessage.payload
-                    : JSON.stringify(meshTelemetry.lastReceivedMessage.payload)}
-                </Text>
+                {meshTelemetry.lastReceivedMessage.messageType === 'DISTRESS_BEACON' ? (
+                  (() => {
+                    const payload = typeof meshTelemetry.lastReceivedMessage.payload === 'object' && meshTelemetry.lastReceivedMessage.payload !== null
+                      ? (meshTelemetry.lastReceivedMessage.payload as DistressBeaconPayload)
+                      : null;
+                    const loc = payload?.location;
+
+                    return (
+                      <View style={styles.distressBox}>
+                        <Text style={styles.distressTitle}>🚨 REQUEST RESCUE</Text>
+                        <Text style={styles.distressLine}>
+                          <Text style={styles.distressBold}>Emergency Type: </Text>
+                          {payload?.emergencyType || 'EMERGENCY'}
+                        </Text>
+                        <Text style={styles.distressLine}>
+                          <Text style={styles.distressBold}>People: </Text>
+                          {payload?.count ?? 1}
+                        </Text>
+                        {payload?.notes ? (
+                          <Text style={styles.distressLine}>
+                            <Text style={styles.distressBold}>Notes: </Text>
+                            {payload.notes}
+                          </Text>
+                        ) : null}
+
+                        <View style={styles.distressLocSection}>
+                          {loc ? (
+                            <>
+                              <Text style={styles.distressLocTitle}>📍 Location</Text>
+                              <Text style={styles.distressLocLine}>
+                                Latitude: {typeof loc.latitude === 'number' ? loc.latitude.toFixed(6) : loc.latitude}
+                              </Text>
+                              <Text style={styles.distressLocLine}>
+                                Longitude: {typeof loc.longitude === 'number' ? loc.longitude.toFixed(6) : loc.longitude}
+                              </Text>
+                              <Text style={styles.distressLocLine}>
+                                Accuracy: ±{loc.accuracy}m
+                              </Text>
+                              {typeof loc.latitude === 'number' && typeof loc.longitude === 'number' ? (
+                                <TouchableOpacity
+                                  activeOpacity={0.8}
+                                  onPress={() => handleOpenGoogleMaps(loc.latitude, loc.longitude)}
+                                  style={styles.openMapsBtn}>
+                                  <Text style={styles.openMapsIcon}>🗺️</Text>
+                                  <Text style={styles.openMapsBtnText}>Open in Google Maps</Text>
+                                </TouchableOpacity>
+                              ) : null}
+                            </>
+                          ) : (
+                            <Text style={styles.distressLocUnavailable}>📍 Location unavailable</Text>
+                          )}
+                        </View>
+                      </View>
+                    );
+                  })()
+                ) : (
+                  <Text style={styles.payloadText}>
+                    {typeof meshTelemetry.lastReceivedMessage.payload === 'string'
+                      ? meshTelemetry.lastReceivedMessage.payload
+                      : JSON.stringify(meshTelemetry.lastReceivedMessage.payload)}
+                  </Text>
+                )}
               </View>
             </View>
           )}
@@ -560,13 +755,20 @@ export const NearbyDevicesScreen: React.FC<NearbyDevicesScreenProps> = ({
                     </View>
                   </View>
                   <Text style={styles.queueItemPayload} numberOfLines={1}>
-                    {typeof item.message.payload === 'string'
+                    {item.message.messageType === 'DISTRESS_BEACON'
+                      ? `🚨 REQUEST RESCUE: ${(item.message.payload as any)?.emergencyType || 'EMERGENCY'} (${(item.message.payload as any)?.count ?? 1} ppl)`
+                      : typeof item.message.payload === 'string'
                       ? item.message.payload
                       : JSON.stringify(item.message.payload)}
                   </Text>
                   <Text style={styles.queueItemMeta}>
                     Hops: {item.message.hopCount} • TTL: {item.message.ttl} • Relayed to: {item.forwardedToPeers.length} peer(s)
                   </Text>
+                  {item.lastError && item.status === 'PENDING' ? (
+                    <Text style={styles.queueItemError} numberOfLines={1}>
+                      ⚠️ Last attempt: {item.lastError}
+                    </Text>
+                  ) : null}
                 </View>
               ))}
             </View>
@@ -620,54 +822,133 @@ const styles = StyleSheet.create({
     color: THEME.colors.emergency,
   },
   nodeIdentityCard: {
-    backgroundColor: THEME.colors.surface,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: THEME.colors.signalDark,
-    borderRadius: THEME.borderRadius.md,
-    padding: THEME.spacing.md,
-    marginBottom: THEME.spacing.sm,
+    borderColor: '#EDF0F3',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 10,
+    shadowColor: '#0F172A',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
   },
-  nodeIdentityRow: {
+  nodeIdentityTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  nodeIdentityLeft: {
+    flex: 1,
+  },
   nodeIdentityLabel: {
-    ...THEME.typography.caption,
-    color: THEME.colors.signal,
-    letterSpacing: 0.5,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    letterSpacing: 0.8,
   },
   nodeIdentityVal: {
     fontSize: 18,
-    fontWeight: '900',
-    color: THEME.colors.textPrimary,
-    letterSpacing: 1,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: 0.5,
     marginTop: 2,
   },
-  nodeIdentityHint: {
-    ...THEME.typography.bodySmall,
-    color: THEME.colors.textMuted,
+  beaconBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 9999,
+  },
+  beaconBadgeActive: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  beaconBadgeOff: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  beaconDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  beaconDotActive: {
+    backgroundColor: '#059669',
+  },
+  beaconDotOff: {
+    backgroundColor: '#94A3B8',
+  },
+  beaconBadgeText: {
     fontSize: 11,
-    marginTop: 6,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  beaconTextActive: {
+    color: '#059669',
+  },
+  beaconTextOff: {
+    color: '#64748B',
+  },
+  nodeIdentityDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 12,
+  },
+  nodeIdentityActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  nodeIdentityActionLeft: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  nodeIdentityActionTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0066FF',
+    letterSpacing: 0.5,
+  },
+  nodeIdentityHint: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
     lineHeight: 15,
   },
   advToggleBtn: {
-    backgroundColor: THEME.colors.surfaceRaised,
-    borderWidth: 1,
-    borderColor: THEME.colors.signal,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: THEME.borderRadius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 110,
   },
-  advToggleBtnActive: {
-    backgroundColor: THEME.colors.signalDark,
-    borderColor: THEME.colors.signal,
+  advToggleBtnStart: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  advToggleBtnStop: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
   },
   advToggleBtnText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#ffffff',
     letterSpacing: 0.5,
+  },
+  advToggleBtnTextStart: {
+    color: '#0066FF',
+  },
+  advToggleBtnTextStop: {
+    color: '#EF4444',
   },
   permissionActionBtn: {
     backgroundColor: 'rgba(234, 179, 8, 0.15)',
@@ -867,5 +1148,77 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: THEME.colors.textMuted,
     marginTop: 3,
+  },
+  queueItemError: {
+    fontSize: 10,
+    color: '#f87171',
+    marginTop: 2,
+    fontStyle: 'italic',
+  },
+  distressBox: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 8,
+    padding: 10,
+  },
+  distressTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#DC2626',
+    marginBottom: 6,
+    letterSpacing: 0.5,
+  },
+  distressLine: {
+    fontSize: 12,
+    color: '#0F172A',
+    marginBottom: 3,
+  },
+  distressBold: {
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  distressLocSection: {
+    marginTop: 8,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#FEE2E2',
+  },
+  distressLocTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#059669',
+    marginBottom: 2,
+  },
+  distressLocLine: {
+    fontSize: 11,
+    color: '#0F172A',
+    fontWeight: '600',
+    paddingLeft: 4,
+  },
+  distressLocUnavailable: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontStyle: 'italic',
+  },
+  openMapsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0066FF',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginTop: 8,
+  },
+  openMapsIcon: {
+    fontSize: 14,
+    marginRight: 6,
+  },
+  openMapsBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
 });

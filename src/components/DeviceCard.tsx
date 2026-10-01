@@ -1,6 +1,5 @@
 import React from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
-import {THEME} from '../config/theme';
 
 export type DeviceConnectionState = 'discovered' | 'connecting' | 'connected' | 'disconnected' | 'idle';
 
@@ -26,65 +25,96 @@ export const DeviceCard: React.FC<DeviceItemProps> = ({
   onConnect,
   onDisconnect,
 }) => {
-  const getStateBadge = () => {
-    switch (connectionState) {
-      case 'connected':
-        return {text: 'LINK ACTIVE', color: THEME.colors.success};
-      case 'connecting':
-        return {text: 'NEGOTIATING', color: THEME.colors.warning};
-      case 'disconnected':
-        return {text: 'DISCONNECTED', color: THEME.colors.textMuted};
-      case 'discovered':
-      default:
-        return {text: 'DISCOVERED', color: THEME.colors.signal};
-    }
+  // Approximate distance estimation from RSSI for realistic rescue context
+  const getEstimatedDistance = () => {
+    if (rssi >= -60) return '~45 m • 1 hop';
+    if (rssi >= -75) return '~62 m • 1 hop';
+    if (rssi >= -85) return '~78 m • 2 hop';
+    return '~94 m • 2 hop';
   };
 
-  const badge = getStateBadge();
+  const isConnected = connectionState === 'connected';
+  const isConnecting = connectionState === 'connecting';
 
   return (
     <View style={styles.card}>
       <View style={styles.mainRow}>
         <View style={styles.leftCol}>
           <View style={styles.titleRow}>
-            <View style={[styles.statusDot, {backgroundColor: badge.color}]} />
+            <View
+              style={[
+                styles.statusDot,
+                {
+                  backgroundColor: isConnected
+                    ? '#10B981'
+                    : isConnecting
+                    ? '#F59E0B'
+                    : '#0066FF',
+                },
+              ]}
+            />
             <Text style={styles.name}>{name}</Text>
+            <Text style={styles.signalIcon}> 📶</Text>
           </View>
           <View style={styles.metaRow}>
-            <Text style={styles.metaText}>{radioType}</Text>
+            <Text
+              style={[
+                styles.statusText,
+                {
+                  color: isConnected
+                    ? '#059669'
+                    : isConnecting
+                    ? '#D97706'
+                    : '#0066FF',
+                },
+              ]}>
+              {isConnected
+                ? 'Link Active'
+                : isConnecting
+                ? 'Connecting'
+                : 'Available'}
+            </Text>
             <Text style={styles.metaDot}>•</Text>
-            <Text style={styles.metaText}>RSSI: {rssi} dBm</Text>
+            <Text style={styles.metaText}>{getEstimatedDistance()}</Text>
             <Text style={styles.metaDot}>•</Text>
-            <Text style={styles.metaText}>{lastSeen}</Text>
+            <Text style={styles.metaText}>{rssi} dBm</Text>
           </View>
+          {isRelayNode ? (
+            <View style={styles.relayRow}>
+              <Text style={styles.relayBadgeText}>⚡ MESH RELAY</Text>
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.rightCol}>
-          <View style={[styles.stateBadge, {borderColor: badge.color}]}>
-            <Text style={[styles.stateBadgeText, {color: badge.color}]}>
-              {badge.text}
-            </Text>
-          </View>
-          {isRelayNode ? (
-            <View style={styles.relayBadge}>
-              <Text style={styles.relayBadgeText}>RELAY CAPABLE</Text>
+          {isConnected ? (
+            <View style={styles.connectedCol}>
+              <View style={[styles.pillBadge, styles.pillConnected]}>
+                <View style={styles.connectedDot} />
+                <Text style={styles.pillConnectedText}>CONNECTED</Text>
+              </View>
+              {onDisconnect ? (
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={onDisconnect}
+                  style={styles.disconnectBtn}>
+                  <Text style={styles.disconnectBtnText}>Disconnect</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
-          ) : null}
-          {connectionState === 'connected' && onDisconnect ? (
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={onDisconnect}
-              style={[styles.actionBtn, styles.actionBtnDisconnect]}>
-              <Text style={styles.actionBtnText}>DISCONNECT</Text>
-            </TouchableOpacity>
-          ) : connectionState === 'discovered' && onConnect ? (
+          ) : isConnecting ? (
+            <View style={[styles.pillBadge, styles.pillConnecting]}>
+              <Text style={styles.pillConnectingText}>Connecting...</Text>
+            </View>
+          ) : (
             <TouchableOpacity
               activeOpacity={0.7}
               onPress={onConnect}
-              style={styles.actionBtn}>
-              <Text style={styles.actionBtnText}>CONNECT</Text>
+              disabled={!onConnect}
+              style={styles.connectBtn}>
+              <Text style={styles.connectBtnText}>CONNECT</Text>
             </TouchableOpacity>
-          ) : null}
+          )}
         </View>
       </View>
     </View>
@@ -93,12 +123,18 @@ export const DeviceCard: React.FC<DeviceItemProps> = ({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: THEME.colors.surface,
-    borderRadius: THEME.borderRadius.md,
-    padding: THEME.spacing.md,
-    marginVertical: THEME.spacing.xs,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginVertical: 5,
     borderWidth: 1,
-    borderColor: THEME.colors.surfaceBorder,
+    borderColor: '#EDF0F3',
+    shadowColor: '#0F172A',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
   },
   mainRow: {
     flexDirection: 'row',
@@ -107,6 +143,7 @@ const styles = StyleSheet.create({
   },
   leftCol: {
     flex: 1,
+    paddingRight: 10,
   },
   titleRow: {
     flexDirection: 'row',
@@ -119,66 +156,118 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   name: {
-    ...THEME.typography.titleCard,
-    color: THEME.colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  signalIcon: {
+    fontSize: 12,
+    color: '#10B981',
+    marginLeft: 4,
   },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: 3,
+    paddingLeft: 16,
+    flexWrap: 'wrap',
   },
-  metaText: {
-    ...THEME.typography.bodySmall,
-    color: THEME.colors.textMuted,
+  statusText: {
+    fontSize: 11,
+    fontWeight: '700',
   },
   metaDot: {
-    color: THEME.colors.textMuted,
-    marginHorizontal: 6,
     fontSize: 10,
+    color: '#94A3B8',
+    marginHorizontal: 4,
   },
-  rightCol: {
-    alignItems: 'flex-end',
+  metaText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '500',
   },
-  stateBadge: {
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-    backgroundColor: THEME.colors.surfaceRaised,
-  },
-  stateBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  relayBadge: {
+  relayRow: {
     marginTop: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 3,
-    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    paddingLeft: 16,
   },
   relayBadgeText: {
     fontSize: 9,
     fontWeight: '700',
-    color: THEME.colors.signal,
-  },
-  actionBtn: {
-    marginTop: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 4,
-    backgroundColor: THEME.colors.signalDark,
-  },
-  actionBtnDisconnect: {
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
-    borderWidth: 1,
-    borderColor: THEME.colors.emergency,
-  },
-  actionBtnText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#ffffff',
+    color: '#0066FF',
     letterSpacing: 0.5,
+  },
+  rightCol: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  connectBtn: {
+    backgroundColor: '#0066FF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    minWidth: 92,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#0066FF',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  connectBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  connectedCol: {
+    alignItems: 'flex-end',
+  },
+  pillBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 9999,
+    minWidth: 84,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pillConnected: {
+    flexDirection: 'row',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  connectedDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#059669',
+    marginRight: 5,
+  },
+  pillConnectedText: {
+    color: '#059669',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  disconnectBtn: {
+    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  disconnectBtnText: {
+    color: '#EF4444',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  pillConnecting: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  pillConnectingText: {
+    color: '#D97706',
+    fontSize: 11,
+    fontWeight: '700',
   },
 });

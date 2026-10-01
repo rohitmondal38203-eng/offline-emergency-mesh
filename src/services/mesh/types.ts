@@ -16,6 +16,50 @@ export type MessageDeliveryStatus =
   | 'EXPIRED';
 
 /**
+ * Structured Payload for DISTRESS_BEACON
+ */
+export interface DistressBeaconPayload {
+  emergencyType: string;
+  count: number;
+  notes?: string;
+  location?: {
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    timestamp: number;
+  };
+}
+
+/**
+ * Phase 7: Local Hazard Broadcast Types
+ */
+export type HazardType =
+  | 'FLOOD'
+  | 'FIRE'
+  | 'ROAD_BLOCKED'
+  | 'BUILDING_COLLAPSE'
+  | 'LANDSLIDE'
+  | 'OTHER';
+
+export type HazardSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export interface HazardLocation {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+  timestamp: number;
+}
+
+export interface HazardBroadcastPayload {
+  hazardType: HazardType;
+  severity: HazardSeverity;
+  title?: string;
+  message: string;
+  location?: HazardLocation;
+  expiresAt?: number;
+}
+
+/**
  * Standard Application-Layer Mesh Message
  */
 export interface MeshMessage {

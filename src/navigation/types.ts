@@ -9,6 +9,7 @@ export type ScreenName =
   | 'OFFLINE_MAP'
   | 'HAZARD_BROADCAST'
   | 'SOS_FLASHLIGHT'
+  | 'SYSTEM_STATUS'
   | 'SETTINGS';
 
 export interface NavigationProp {

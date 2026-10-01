@@ -30,7 +30,8 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    marginVertical: THEME.spacing.sm,
+    marginTop: 16,
+    marginBottom: 8,
   },
   titleRow: {
     flexDirection: 'row',
@@ -38,25 +39,27 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   title: {
-    ...THEME.typography.titleSection,
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: 0.1,
   },
   badge: {
-    backgroundColor: THEME.colors.surfaceRaised,
+    backgroundColor: '#EFF6FF',
     paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: THEME.colors.surfaceBorder,
+    paddingVertical: 3,
+    borderRadius: 9999,
   },
   badgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: THEME.colors.signal,
-    letterSpacing: 0.5,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0066FF',
   },
   subtitle: {
-    ...THEME.typography.bodySmall,
-    color: THEME.colors.textMuted,
+    fontSize: 12,
+    color: '#64748B',
     marginTop: 2,
+    fontWeight: '400',
   },
 });
+

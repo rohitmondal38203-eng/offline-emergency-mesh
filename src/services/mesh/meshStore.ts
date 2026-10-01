@@ -11,6 +11,8 @@
 import {NativeModules, Platform} from 'react-native';
 import {
   DEFAULT_TTL,
+  DistressBeaconPayload,
+  HazardBroadcastPayload,
   MeshMessage,
   MeshTelemetry,
   MessageDeliveryStatus,
@@ -128,8 +130,9 @@ export class MeshStoreManager {
     senderAddress?: string,
     initialStatus: MessageDeliveryStatus = 'PENDING'
   ): Promise<StoredMeshMessage | null> {
-    if (this.hasSeen(message.messageId)) {
-      return null; // Suppress duplicate
+    if (this.messagesMap.has(message.messageId)) {
+      console.log(`[MeshStore] save result: messageId=${message.messageId} saved=false (already in messagesMap)`);
+      return this.messagesMap.get(message.messageId) || null;
     }
 
     this.seenIds.add(message.messageId);
@@ -144,6 +147,7 @@ export class MeshStoreManager {
 
     this.messagesMap.set(message.messageId, stored);
     await this.persist();
+    console.log(`[MeshStore] save result: messageId=${message.messageId} type=${message.messageType} saved=true status=${initialStatus} totalInStore=${this.messagesMap.size}`);
     return stored;
   }
 
@@ -221,6 +225,15 @@ export class MeshStoreManager {
   }
 
   /**
+   * Retrieves all HAZARD_BROADCAST messages sorted newest first.
+   */
+  public getHazardBroadcasts(): StoredMeshMessage[] {
+    return Array.from(this.messagesMap.values())
+      .filter(item => item.message.messageType === 'HAZARD_BROADCAST')
+      .sort((a, b) => b.receivedAt - a.receivedAt);
+  }
+
+  /**
    * Clears all stored messages (for developer reset/debugging).
    */
   public async clearAll(): Promise<void> {
@@ -245,7 +258,9 @@ export class MeshStoreManager {
     let expiredCount = 0;
 
     let lastReceived: MeshMessage | null = null;
+    let lastReceivedTime = 0;
     let lastForwarded: MeshMessage | null = null;
+    let lastForwardedTime = 0;
 
     all.forEach(item => {
       switch (item.status) {
@@ -264,14 +279,17 @@ export class MeshStoreManager {
       }
 
       if (item.message.originNodeId !== localNodeId) {
-        if (!lastReceived || item.receivedAt > (lastReceived.createdAt || 0)) {
+        if (!lastReceived || item.receivedAt > lastReceivedTime) {
           lastReceived = item.message;
+          lastReceivedTime = item.receivedAt;
         }
       }
 
       if (item.status === 'FORWARDED') {
-        if (!lastForwarded || (item.lastAttemptAt || 0) > (lastForwarded.createdAt || 0)) {
+        const attempt = item.lastAttemptAt || 0;
+        if (!lastForwarded || attempt > lastForwardedTime) {
           lastForwarded = item.message;
+          lastForwardedTime = attempt;
         }
       }
     });
@@ -310,6 +328,56 @@ export class MeshStoreManager {
       ttl: DEFAULT_TTL,
       hopCount: 0,
       payload: customText || `Hello from RESQ mesh node [${originNodeId.slice(-4)}]`,
+    };
+  }
+
+  /**
+   * Creates a standardized DISTRESS_BEACON message for emergency rescue workflow.
+   */
+  public createDistressBeacon(
+    originNodeId: string,
+    payload: DistressBeaconPayload
+  ): MeshMessage {
+    const nonce = Math.floor(0x1000 + Math.random() * 0xefff)
+      .toString(16)
+      .toUpperCase();
+    const timestamp = Date.now();
+    const messageId = `${originNodeId}_${timestamp}_${nonce}`;
+
+    return {
+      messageId,
+      originNodeId,
+      destinationNodeId: undefined, // Broadcast flood to all mesh nodes
+      messageType: 'DISTRESS_BEACON',
+      createdAt: timestamp,
+      ttl: DEFAULT_TTL,
+      hopCount: 0,
+      payload,
+    };
+  }
+
+  /**
+   * Creates a standardized HAZARD_BROADCAST message for offline disaster bulletins.
+   */
+  public createHazardBroadcast(
+    originNodeId: string,
+    payload: HazardBroadcastPayload
+  ): MeshMessage {
+    const nonce = Math.floor(0x1000 + Math.random() * 0xefff)
+      .toString(16)
+      .toUpperCase();
+    const timestamp = Date.now();
+    const messageId = `${originNodeId}_${timestamp}_${nonce}`;
+
+    return {
+      messageId,
+      originNodeId,
+      destinationNodeId: undefined, // Broadcast flood to all mesh nodes
+      messageType: 'HAZARD_BROADCAST',
+      createdAt: timestamp,
+      ttl: DEFAULT_TTL,
+      hopCount: 0,
+      payload,
     };
   }
 }

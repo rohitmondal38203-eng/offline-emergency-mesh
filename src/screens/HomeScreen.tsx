@@ -1,13 +1,14 @@
-import React from 'react';
-import {ScrollView, StyleSheet, Text, View} from 'react-native';
-import {THEME} from '../config/theme';
+import React, {useState} from 'react';
 import {
-  AppHeader,
-  EmergencyButton,
-  FeatureCard,
-  SectionHeader,
-  StatusCard,
-} from '../components';
+  Animated,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import {THEME} from '../config/theme';
+import {AppHeader} from '../components';
 import {NavigationProp} from '../navigation/types';
 
 interface HomeScreenProps {
@@ -15,102 +16,115 @@ interface HomeScreenProps {
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({navigation}) => {
+  const [holdingProgress] = useState(new Animated.Value(1));
+
+  const handlePressIn = () => {
+    Animated.spring(holdingProgress, {
+      toValue: 0.94,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(holdingProgress, {
+      toValue: 1,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleSosPress = () => {
+    navigation.navigate('REQUEST_RESCUE');
+  };
+
   return (
     <View style={styles.container}>
       <AppHeader
         title="RESQ-MESH"
-        subtitle="Disaster Emergency Mesh"
-        onSettings={() => navigation.navigate('SETTINGS')}
+        subtitle="Offline Disaster Mesh & Rescue"
       />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
-        {/* Offline Mode Banner */}
-        <View style={styles.offlineBanner}>
-          <View style={styles.offlineDot} />
-          <Text style={styles.offlineText}>OFFLINE MODE ACTIVE</Text>
-          <Text style={styles.offlineSubtext}>Zero Cellular / Zero Internet</Text>
+        {/* Large Central Circular SOS Button */}
+        <View style={styles.sosContainer}>
+          <View style={styles.sosOuterRing2}>
+            <View style={styles.sosOuterRing1}>
+              <Animated.View
+                style={[
+                  styles.sosButton,
+                  {transform: [{scale: holdingProgress}]},
+                ]}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPressIn={handlePressIn}
+                  onPressOut={handlePressOut}
+                  onPress={handleSosPress}
+                  style={styles.sosTouchable}>
+                  <Text style={styles.sosText}>SOS</Text>
+                  <Text style={styles.sosIcon}>⚠️</Text>
+                </TouchableOpacity>
+              </Animated.View>
+            </View>
+          </View>
+          <Text style={styles.sosPrompt}>Tap or hold to request emergency rescue</Text>
         </View>
 
-        {/* Live Network & Mesh Status */}
-        <SectionHeader title="System Telemetry" badge="LOCAL SENSORS" />
-        <StatusCard
-          variant="info"
-          items={[
-            {label: 'Operating Environment', value: '100% Offline', color: THEME.colors.warning},
-            {label: 'P2P Mesh Radio', value: 'Standby (Phase 3)', color: THEME.colors.signal},
-            {label: 'Discovered Mesh Peers', value: '0 Devices', color: THEME.colors.textMuted},
-            {label: 'Active Rescue Beacon', value: 'None Active', color: THEME.colors.success},
-          ]}
-        />
+        {/* Quick Access Cards */}
+        <View style={styles.cardGroup}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => navigation.navigate('OFFLINE_MAP')}
+            style={styles.infoCard}>
+            <View style={[styles.cardIconCircle, {backgroundColor: '#EFF6FF'}]}>
+              <Text style={styles.cardIconGlyph}>📍</Text>
+            </View>
+            <View style={styles.cardTextWrapper}>
+              <Text style={styles.cardTitle}>Offline GPS Fix</Text>
+              <Text style={styles.cardSubtitle}>Acquire GNSS satellite coordinates without internet</Text>
+            </View>
+            <Text style={styles.chevron}>›</Text>
+          </TouchableOpacity>
 
-        {/* PRIMARY ACTION: Large REQUEST RESCUE Button */}
-        <View style={styles.emergencySection}>
-          <Text style={styles.emergencyPrompt}>LIFE-THREATENING EMERGENCY?</Text>
-          <EmergencyButton
-            title="⚠ REQUEST RESCUE"
-            subtitle="Broadcast distress beacon across nearby mesh peers"
-            variant="emergency"
-            onPress={() => navigation.navigate('REQUEST_RESCUE')}
-          />
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => navigation.navigate('HAZARD_BROADCAST')}
+            style={[styles.infoCard, {marginTop: 10}]}>
+            <View style={[styles.cardIconCircle, {backgroundColor: '#FEF3C7'}]}>
+              <Text style={styles.cardIconGlyph}>📢</Text>
+            </View>
+            <View style={styles.cardTextWrapper}>
+              <Text style={styles.cardTitle}>Local Hazard Broadcast</Text>
+              <Text style={styles.cardSubtitle}>Broadcast & receive offline disaster bulletins</Text>
+            </View>
+            <Text style={styles.chevron}>›</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Core Tactical Modules */}
-        <SectionHeader
-          title="Tactical Emergency Modules"
-          subtitle="Short-range radios, offline cartography & rescue tools"
-        />
+        {/* Emergency Tool Shortcuts (Only real working features) */}
+        <Text style={styles.sectionTitle}>Emergency Radios & Tools</Text>
+        <View style={styles.toolsGrid}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => navigation.navigate('NEARBY_DEVICES')}
+            style={styles.toolCard}>
+            <View style={[styles.toolIconCircle, {backgroundColor: '#EFF6FF'}]}>
+              <Text style={styles.toolIcon}>📶</Text>
+            </View>
+            <Text style={styles.toolName}>Nearby Nodes</Text>
+            <Text style={styles.toolDesc}>BLE Discovery & Mesh Relay</Text>
+          </TouchableOpacity>
 
-        {/* 1. Nearby Devices (FR-1) */}
-        <FeatureCard
-          title="FR-1: Nearby Devices"
-          subtitle="P2P BLE & Wi-Fi Direct peer discovery and link monitor"
-          badge="PHASE 3"
-          badgeColor={THEME.colors.warning}
-          iconSymbol="📶"
-          accentColor={THEME.colors.signal}
-          onPress={() => navigation.navigate('NEARBY_DEVICES')}
-        />
-
-        {/* 2. Offline Map (FR-4) */}
-        <FeatureCard
-          title="FR-4: Offline Vector Map"
-          subtitle="Emergency relief shelters, safe zones & survivor coordinates"
-          badge="PHASE 6"
-          badgeColor={THEME.colors.warning}
-          iconSymbol="🗺️"
-          accentColor={THEME.colors.success}
-          onPress={() => navigation.navigate('OFFLINE_MAP')}
-        />
-
-        {/* 3. Hazard Broadcast (FR-5) */}
-        <FeatureCard
-          title="FR-5: Hazard Broadcast"
-          subtitle="Verified responder updates: drinking water, road blocks, medical"
-          badge="PHASE 7"
-          badgeColor={THEME.colors.warning}
-          iconSymbol="📢"
-          accentColor="#ec4899"
-          onPress={() => navigation.navigate('HAZARD_BROADCAST')}
-        />
-
-        {/* 4. SOS Flashlight (FR-6) */}
-        <FeatureCard
-          title="FR-6: SOS Flashlight"
-          subtitle="Morse code SOS camera strobe for night search & rescue"
-          badge="PHASE 8"
-          badgeColor={THEME.colors.warning}
-          iconSymbol="🔦"
-          accentColor={THEME.colors.emergency}
-          onPress={() => navigation.navigate('SOS_FLASHLIGHT')}
-        />
-
-        {/* Project & Hardware Status Footer */}
-        <View style={styles.footerNote}>
-          <Text style={styles.footerText}>
-            APP-08 • Phase 2 Navigation Shell • Radios inactive until Phase 3
-          </Text>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => navigation.navigate('SYSTEM_STATUS')}
+            style={styles.toolCard}>
+            <View style={[styles.toolIconCircle, {backgroundColor: '#ECFDF5'}]}>
+              <Text style={styles.toolIcon}>📊</Text>
+            </View>
+            <Text style={styles.toolName}>System Status</Text>
+            <Text style={styles.toolDesc}>Radio State & Telemetry</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </View>
@@ -120,66 +134,166 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({navigation}) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: THEME.colors.background,
+    backgroundColor: '#F6F7F9',
   },
   scrollContent: {
-    padding: THEME.spacing.md,
-    paddingBottom: THEME.spacing.xxl,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 28,
   },
-  offlineBanner: {
-    backgroundColor: 'rgba(245, 158, 11, 0.12)',
-    borderRadius: THEME.borderRadius.md,
-    padding: THEME.spacing.md,
-    borderWidth: 1,
-    borderColor: THEME.colors.warningBorder,
+  sosContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 18,
+  },
+  sosOuterRing2: {
+    width: 216,
+    height: 216,
+    borderRadius: 108,
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sosOuterRing1: {
+    width: 176,
+    height: 176,
+    borderRadius: 88,
+    backgroundColor: 'rgba(239, 68, 68, 0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sosButton: {
+    width: 136,
+    height: 136,
+    borderRadius: 68,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#EF4444',
+    shadowOffset: {width: 0, height: 6},
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  sosTouchable: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 68,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sosText: {
+    color: '#FFFFFF',
+    fontSize: 32,
+    fontWeight: '900',
+    letterSpacing: 2,
+  },
+  sosIcon: {
+    fontSize: 16,
+    marginTop: 2,
+  },
+  sosPrompt: {
+    marginTop: 12,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+    letterSpacing: 0.3,
+  },
+  cardGroup: {
+    marginVertical: 10,
+  },
+  infoCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: THEME.spacing.md,
-  },
-  offlineDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: THEME.colors.warning,
-    marginRight: 10,
-  },
-  offlineText: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: THEME.colors.warning,
-    letterSpacing: 0.8,
-    marginRight: 8,
-  },
-  offlineSubtext: {
-    fontSize: 11,
-    color: THEME.colors.textSecondary,
-    flex: 1,
-    textAlign: 'right',
-  },
-  emergencySection: {
-    backgroundColor: 'rgba(220, 38, 38, 0.1)',
-    borderRadius: THEME.borderRadius.md,
-    padding: THEME.spacing.md,
-    marginVertical: THEME.spacing.md,
     borderWidth: 1,
-    borderColor: 'rgba(220, 38, 38, 0.3)',
+    borderColor: '#EDF0F3',
+    shadowColor: '#0F172A',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
   },
-  emergencyPrompt: {
-    ...THEME.typography.caption,
-    color: THEME.colors.emergency,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  footerNote: {
-    marginTop: THEME.spacing.lg,
-    paddingTop: THEME.spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: THEME.colors.surfaceBorder,
+  cardIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
   },
-  footerText: {
-    ...THEME.typography.caption,
-    color: THEME.colors.textMuted,
-    textAlign: 'center',
+  cardIconGlyph: {
+    fontSize: 18,
+  },
+  cardTextWrapper: {
+    flex: 1,
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  cardSubtitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748B',
+    marginTop: 1,
+  },
+  chevron: {
+    fontSize: 20,
+    color: '#CBD5E1',
+    fontWeight: '300',
+    marginLeft: 6,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 16,
+    marginBottom: 12,
+    letterSpacing: 0.2,
+  },
+  toolsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  toolCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    marginHorizontal: 4,
+    alignItems: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#EDF0F3',
+    shadowColor: '#0F172A',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  toolIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  toolIcon: {
+    fontSize: 18,
+  },
+  toolName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 2,
+  },
+  toolDesc: {
+    fontSize: 11,
+    color: '#64748B',
+    lineHeight: 14,
   },
 });

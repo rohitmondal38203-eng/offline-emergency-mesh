@@ -8,6 +8,10 @@ interface AppHeaderProps {
   onBack?: () => void;
   onSettings?: () => void;
   showBack?: boolean;
+  badge?: string;
+  badgeColor?: string;
+  rightActionText?: string;
+  onRightAction?: () => void;
 }
 
 export const AppHeader: React.FC<AppHeaderProps> = ({
@@ -16,6 +20,10 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   onBack,
   onSettings,
   showBack = false,
+  badge,
+  badgeColor = THEME.colors.success,
+  rightActionText,
+  onRightAction,
 }) => {
   return (
     <View style={styles.container}>
@@ -27,12 +35,11 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
             accessibilityRole="button"
             accessibilityLabel="Go back"
             style={styles.backButton}>
-            <Text style={styles.backIcon}>‹</Text>
-            <Text style={styles.backText}>BACK</Text>
+            <Text style={styles.backIcon}>←</Text>
           </TouchableOpacity>
         ) : (
-          <View style={styles.brandBadge}>
-            <Text style={styles.brandBadgeText}>APP-08</Text>
+          <View style={styles.brandIconWrapper}>
+            <Text style={styles.brandIconText}>🛡️</Text>
           </View>
         )}
         <View style={styles.titleWrapper}>
@@ -47,14 +54,32 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
         </View>
       </View>
 
-      {onSettings ? (
+      {badge ? (
+        <View
+          style={[
+            styles.badgePill,
+            {backgroundColor: badgeColor === THEME.colors.success ? '#ECFDF5' : '#EFF6FF'},
+          ]}>
+          <View style={[styles.badgeDot, {backgroundColor: badgeColor}]} />
+          <Text style={[styles.badgePillText, {color: badgeColor}]}>{badge}</Text>
+        </View>
+      ) : null}
+
+      {rightActionText && onRightAction ? (
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={onRightAction}
+          style={styles.actionBtn}>
+          <Text style={styles.actionBtnText}>{rightActionText}</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {!badge && !rightActionText && onSettings ? (
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={onSettings}
-          accessibilityRole="button"
-          accessibilityLabel="Open settings and project about info"
           style={styles.settingsButton}>
-          <Text style={styles.settingsText}>ℹ INFO</Text>
+          <Text style={styles.settingsText}>⚙️</Text>
         </TouchableOpacity>
       ) : null}
     </View>
@@ -63,11 +88,11 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: THEME.colors.surface,
-    paddingHorizontal: THEME.spacing.md,
-    paddingVertical: THEME.spacing.sm,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: THEME.colors.surfaceBorder,
+    borderBottomColor: '#F1F5F9',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -79,67 +104,73 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 6,
     paddingRight: 12,
-    marginRight: 8,
-    minHeight: 44,
+    marginRight: 4,
+    justifyContent: 'center',
   },
   backIcon: {
-    fontSize: 26,
-    lineHeight: 26,
-    color: THEME.colors.signal,
-    fontWeight: '700',
-    marginRight: 4,
+    fontSize: 22,
+    color: '#0F172A',
+    fontWeight: '600',
   },
-  backText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: THEME.colors.signal,
-    letterSpacing: 0.5,
-  },
-  brandBadge: {
-    backgroundColor: 'rgba(56, 189, 248, 0.12)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+  brandIconWrapper: {
     marginRight: 10,
-    borderWidth: 1,
-    borderColor: THEME.colors.signalDark,
   },
-  brandBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: THEME.colors.signal,
-    letterSpacing: 0.5,
+  brandIconText: {
+    fontSize: 22,
   },
   titleWrapper: {
     flex: 1,
   },
   title: {
-    ...THEME.typography.titleSection,
-    fontSize: 16,
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: 0.2,
   },
   subtitle: {
-    fontSize: 11,
-    color: THEME.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748B',
     marginTop: 1,
   },
-  settingsButton: {
-    backgroundColor: THEME.colors.surfaceRaised,
+  badgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 4,
+    borderRadius: 9999,
+  },
+  badgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  badgePillText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  actionBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 6,
-    borderWidth: 1,
-    borderColor: THEME.colors.surfaceBorder,
-    minHeight: 36,
+    backgroundColor: '#EFF6FF',
+  },
+  actionBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0066FF',
+  },
+  settingsButton: {
+    padding: 6,
     justifyContent: 'center',
+    alignItems: 'center',
   },
   settingsText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: THEME.colors.textSecondary,
-    letterSpacing: 0.5,
+    fontSize: 18,
+    color: '#64748B',
   },
 });
+

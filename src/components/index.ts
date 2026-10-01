@@ -7,3 +7,4 @@ export * from './PlaceholderNotice';
 export * from './DeviceCard';
 export * from './HazardCard';
 export * from './AppHeader';
+export * from './BottomTabBar';

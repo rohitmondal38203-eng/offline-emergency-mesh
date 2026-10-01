@@ -53,6 +53,7 @@ export const BleAdvertiser = {
       throw new Error('BLE advertising is not supported on this platform/device');
     }
 
+    console.log(`[BLE] BEACON_START native call peerId=${peerId}`);
     return await ResqBleAdvertiser.startAdvertising(
       peerId,
       RESQ_MESH_SERVICE_UUID
@@ -63,6 +64,7 @@ export const BleAdvertiser = {
    * Stops broadcasting the BLE presence advertisement.
    */
   async stopAdvertising(): Promise<boolean> {
+    console.log('[BLE] BEACON_STOP native call');
     if (Platform.OS !== 'android' || !ResqBleAdvertiser?.stopAdvertising) {
       return true;
     }

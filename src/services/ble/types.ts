@@ -55,3 +55,6 @@ export interface BleDiscoveryState {
 
 /** Standard RESQ-MESH BLE 128-bit Service UUID */
 export const RESQ_MESH_SERVICE_UUID = '0000fd08-0000-1000-8000-00805f9b34fb';
+
+/** Standard RESQ-MESH BLE 128-bit Mesh Characteristic UUID */
+export const RESQ_MESH_CHARACTERISTIC_UUID = '0000fd09-0000-1000-8000-00805f9b34fb';
